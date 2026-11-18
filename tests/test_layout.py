@@ -6,9 +6,9 @@ preview picture can be made.
 
 Runs against the code directly, with its own empty data folder."""
 import os, shutil, subprocess, sys, tempfile, time
-os.environ["PEAKCUT_DATA"] = tempfile.mkdtemp(prefix="pc-layout-")
-os.environ.update(DATABASE_URL="", PEAKCUT_ACCOUNTS="0", PEAKCUT_AI_KEY="", PEAKCUT_AI_KEY_FILE="",
-                  PEAKCUT_AI_MODELS="")          # the tiny built-in database and no sign-in, as on a new install
+os.environ["REFORMCUT_DATA"] = tempfile.mkdtemp(prefix="pc-layout-")
+os.environ.update(DATABASE_URL="", REFORMCUT_ACCOUNTS="0", REFORMCUT_AI_KEY="", REFORMCUT_AI_KEY_FILE="",
+                  REFORMCUT_AI_MODELS="")          # the tiny built-in database and no sign-in, as on a new install
 sys.path.insert(0, ".")
 from pathlib import Path
 from PIL import Image
@@ -122,7 +122,7 @@ try:
     from studio import auth, db, jobs, server
     db.init()
     jid = "prevjob1234"
-    d = Path(os.environ["PEAKCUT_DATA"]) / "jobs" / jid
+    d = Path(os.environ["REFORMCUT_DATA"]) / "jobs" / jid
     (d / "clips").mkdir(parents=True, exist_ok=True)
     shutil.copyfile(src, d / "src.mp4")
     one = {"id": "c1", "status": "done", "start": 1.0, "end": 3.0, "hook": "a test clip", "style": "bounce",
