@@ -814,6 +814,10 @@ def start_session(creator: dict, url=None) -> dict:
     from . import tools
     if tools.missing():
         raise ValueError(tools.HELP)
+    if config.ASR_BACKEND == "whisper":
+        from . import whisper
+        if not whisper.installed():
+            raise ValueError(whisper.HELP)
     job = jobs.create({"type": "live", "url": url, "name": f"{creator['name']} live"}, {}, enqueue=False,
                       creator=creator["id"], kind="live")
     job.update(status="live", stage="Connecting to the stream")

@@ -67,6 +67,10 @@ def _startup():
     render.install_fonts()
     if _tools.missing():
         print("\n  " + _tools.HELP + "\n", flush=True)
+    if config.ASR_BACKEND == "whisper":
+        from . import whisper
+        if not whisper.installed():
+            print("\n  " + whisper.HELP + "\n", flush=True)
     if not transcribe.REMOTE and config.env("PEAKCUT_FETCH_MODEL", "1") != "0":     # the speech model: fetched now, in the background, if it was never downloaded
         from . import fetch_model
         threading.Thread(target=lambda: _quiet(fetch_model.ensure), daemon=True).start()
@@ -625,6 +629,10 @@ def _job_slots():
     from . import tools
     if tools.missing():
         raise HTTPException(503, tools.HELP)
+    if config.ASR_BACKEND == "whisper":
+        from . import whisper
+        if not whisper.installed():
+            raise HTTPException(503, whisper.HELP)
     if jobs.busy_count() >= config.MAX_ACTIVE_JOBS_PER_USER:
         raise HTTPException(429, f"You already have {config.MAX_ACTIVE_JOBS_PER_USER} videos in progress. Wait for one to finish.")
 
