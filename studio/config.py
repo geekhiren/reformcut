@@ -207,6 +207,11 @@ def ai_key() -> str:
     return _secret("PEAKCUT_AI_KEY", "PEAKCUT_AI_KEY_FILE", r"\S{8,}")
 
 
+def sarvam_key() -> str:
+    """Sarvam AI speech to text, for creators set to Hinglish (studio/sarvam_asr.py)."""
+    return _secret("SARVAM_API_KEY", "SARVAM_API_KEY_FILE", r"\S{8,}")
+
+
 def ai_ready() -> bool:
     from . import ai
     return ai.ready()

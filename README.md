@@ -127,6 +127,10 @@ PEAKCUT_AI_KEY=your-key-here
 - You pay the AI service directly for what you use. The **AI usage** page in the app shows how many requests and
   tokens each video took.
 - Speech to text does not use the AI service. It runs on your own machine, so audio never leaves it.
+- The speech model on your machine knows English only. For a creator who speaks Hindi or Hinglish, set
+  **Language they speak** to Hindi / Hinglish in the creator's settings and put a Sarvam AI key in `SARVAM_API_KEY`.
+  That creator's audio then goes to Sarvam (about ₹0.49 a minute) and comes back in Roman letters, which is what
+  the captions use. Every other creator stays on the free local model.
 
 ## Settings
 
@@ -140,6 +144,7 @@ Everything is set through environment variables, normally in a `.env` file next 
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Optional: Sign in with Google, and connecting YouTube |
 | `PEAKCUT_SMTP_*`, `PEAKCUT_MAIL_FROM` | Optional: confirmation and password emails |
 | `PEAKCUT_DATA` | Where videos, clips and the database are kept (default `./data`) |
+| `SARVAM_API_KEY` | Optional: speech to text for Hindi and Hinglish creators |
 
 `.env`, the `secrets/` folder and all user data are ignored by git. Keep keys there, never in the code.
 

@@ -273,10 +273,14 @@ def _decode_remote(pieces: list) -> list:
     return [(p["tokens"], p["timestamps"]) for p in got]
 
 
-def transcribe(audio: np.ndarray, on_progress=None) -> list:
+def transcribe(audio: np.ndarray, on_progress=None, lang="en") -> list:
     """Returns [{'w': word, 's': start_sec, 'e': end_sec}, ...] for the whole audio.
-    Speech is cut at quiet moments into 12-24 s pieces; silent pieces are skipped."""
+    Speech is cut at quiet moments into 12-24 s pieces; silent pieces are skipped.
+    lang "hinglish" goes to Sarvam AI (the local model only knows English)."""
     global _remote_down_until
+    if lang == "hinglish":
+        from . import sarvam_asr
+        return sarvam_asr.transcribe(audio, on_progress)
     if config.ASR_BACKEND == "whisper":
         from . import whisper
         return whisper.transcribe(audio, on_progress)

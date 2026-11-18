@@ -1405,6 +1405,9 @@ function drawAdd(variant) {
       <div class="ob"><div class="ot">Video quality</div><input type="hidden" id="o_quality" value="720"><div class="seg" role="group" aria-label="Video quality">
         <button type="button" data-seg="o_quality" data-v="720" aria-pressed="true">720p<small>Fast</small></button>
         <button type="button" data-seg="o_quality" data-v="1080" aria-pressed="false">1080p<small>Sharper, about 2x slower</small></button></div></div>
+      <div class="ob"><div class="ot">Language spoken</div><input type="hidden" id="o_language" value="${c?.language === "hinglish" ? "hinglish" : "en"}"><div class="seg" role="group" aria-label="Language spoken">
+        <button type="button" data-seg="o_language" data-v="en" aria-pressed="${c?.language !== "hinglish"}">English<small>Free, on this computer</small></button>
+        <button type="button" data-seg="o_language" data-v="hinglish" aria-pressed="${c?.language === "hinglish"}">Hindi / Hinglish<small>Sarvam AI, about ₹29 an hour</small></button></div></div>
       <div class="ob"><div class="ot">Part of the video</div><div class="range">
         <label>From<input id="o_from" type="text" inputmode="numeric" placeholder="0:00" aria-label="From (like 1:05:10, or minutes)"></label>${ic("arrowr")}
         <label>To<input id="o_to" type="text" inputmode="numeric" placeholder="end" aria-label="Up to (like 1:30:00, or minutes)"></label></div>
@@ -1475,7 +1478,7 @@ document.addEventListener("keydown", e => {
 const targetCreator = () => creatorId() || $("#o_creator")?.value || "";
 function jobOptions() {
   const n = id => { const v = $(id).value; return v === "" ? null : Number(v); };
-  const o = {max_clips:n("#o_max"), min_len:n("#o_min"), max_len:n("#o_maxlen"), captions:$("#o_captions").checked, style:$("#o_style").value, layout:$("#o_layout").value, quality:n("#o_quality")};
+  const o = {max_clips:n("#o_max"), min_len:n("#o_min"), max_len:n("#o_maxlen"), captions:$("#o_captions").checked, style:$("#o_style").value, layout:$("#o_layout").value, quality:n("#o_quality"), language:$("#o_language").value};
   // a plain number is minutes, as before; anything else ("1:05:10", "1h5m") is read by the server
   const t = id => { const v = $(id).value.trim(); return v === "" ? null : /^\d+(\.\d+)?$/.test(v) ? Number(v) * 60 : v; };
   if (t("#o_from") !== null) o.range_start = t("#o_from");
@@ -1882,7 +1885,8 @@ function drawCreatorForm() {
   const A = S.accounts;
   box.innerHTML = `<div class="card"><h2>Their stream</h2><p class="help">Where to record from, and whether to start by itself.</p>
       <div class="chans">${channelRows(c)}</div>
-      <div class="fields" style="margin-top:14px"><label class="sw span"><input type="checkbox" data-k="auto_watch" ${c.auto_watch ? "checked" : ""}><span>Record automatically when they go live<small>Checks straight away, then every two minutes.</small></span></label></div></div>
+      <div class="fields" style="margin-top:14px"><label class="sw span"><input type="checkbox" data-k="auto_watch" ${c.auto_watch ? "checked" : ""}><span>Record automatically when they go live<small>Checks straight away, then every two minutes.</small></span></label>
+        <label class="f">Language they speak<select data-k="language">${opts({en:"English (free, on this computer)", hinglish:"Hindi / Hinglish (Sarvam AI, about ₹29 an hour)"}, c.language || "en")}</select></label></div></div>
     <div class="card"><h2>How the AI decides</h2><p class="help">Two separate AI checks. The words judge reads only what was said. The reaction judge sees only how loud the streamer got and how busy chat was, never the words.</p>
       <div class="fields">
         <label class="f">Check the live stream every<select data-k="ai_every_min">${opts({1:"1 minute", 2:"2 minutes", 3:"3 minutes", 5:"5 minutes", 10:"10 minutes"}, c.ai_every_min || 3)}</select><small class="sub" id="costhint" style="font-weight:400">${costHint(c.ai_every_min)}</small></label>
