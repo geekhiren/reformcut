@@ -202,7 +202,7 @@ ACCOUNTS = env("REFORMCUT_ACCOUNTS", "0") == "1"
 # The two buttons along the top of the dashboard: the project's code, and where to follow its maker (feedback goes
 # there too). Set either to an empty value to hide that button, or point them at your own pages in a fork.
 REPO_URL = env("REFORMCUT_REPO_URL", "").strip()
-FOLLOW_URL = env("REFORMCUT_FOLLOW_URL", "https://www.instagram.com/haziq.builds/").strip()
+FOLLOW_URL = env("REFORMCUT_FOLLOW_URL", "").strip()   # empty: no "Follow me" or "Send feedback" button; set it to your own page to show them
 
 # ---------------------------------------------------------------- limits (per user, and for the whole server)
 # Your own Reform Cut has no limits unless you set them: 0 (the default) means "none" for every limit below. The
