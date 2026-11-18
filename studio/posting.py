@@ -103,7 +103,7 @@ def on_clip_ready(job, clip):
 
 def credit(creator, uploader=""):
     """Who made the original stream, for every post: their @handle from the channel link
-    (youtube.com/@name -> @name), else the channel's name, else the creator's name in PeakCut."""
+    (youtube.com/@name -> @name), else the channel's name, else the creator's name in Reform Cut."""
     for url in [creator.get("channel", "")] + list((creator.get("channels") or {}).values()):
         m = re.search(r"youtube\.com/(@[\w.\-]+)", url or "")
         if m:
@@ -272,7 +272,7 @@ def overview() -> dict:
 
 def digest_text() -> str:
     o = overview()
-    lines = ["PeakCut daily summary"]
+    lines = ["Reform Cut daily summary"]
     for r in o["creators"]:
         lines.append(f"- {r['name']}: {r['state']}, {r['clips_today']} clips today, {r['posted_today']} posted today, "
                      f"{r['queued']} waiting, {r['failed']} failed, {r['views']} views")

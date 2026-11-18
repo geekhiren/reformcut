@@ -79,7 +79,7 @@ def _whisper_download():
         st["percent"] = 100
     except Exception as e:
         st["error"] = str(e)[-200:]
-        raise RuntimeError("PeakCut couldn't download its multilingual speech model. Check the internet "
+        raise RuntimeError("Reform Cut couldn't download its multilingual speech model. Check the internet "
                            "connection and free disk space, then try again.") from e
     finally:
         st["doing"] = False
@@ -158,7 +158,7 @@ def _download(lang: str):
     except Exception as e:  # noqa: BLE001
         st["error"] = safe.friendly(e, 200)
         cmd = "python -m studio.fetch_model" + ("" if lang == DEFAULT else f" {lang}")
-        raise RuntimeError(f"PeakCut couldn't download its {label(lang)} speech model (about {size} MB, needed once). "
+        raise RuntimeError(f"Reform Cut couldn't download its {label(lang)} speech model (about {size} MB, needed once). "
                            f"Check the internet connection and free disk space, then try again, or run {cmd} to see "
                            f"what goes wrong. What it reported: {st['error']}") from e
     finally:
@@ -186,7 +186,7 @@ def start(lang: str) -> None:
 
 
 def remove(lang: str) -> None:
-    """Delete a downloaded model to free the space. English stays: it is what PeakCut uses by default."""
+    """Delete a downloaded model to free the space. English stays: it is what Reform Cut uses by default."""
     from . import transcribe
     if lang == DEFAULT:
         raise ValueError("The English speech model is always kept.")
