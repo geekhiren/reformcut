@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from . import admin as admins
 from . import account, load
 from . import (accounts, ai, alerts, auth, config, creators, ctx, db, jobs, live, media, posting,
-               profiles, render, safe, transcribe, usage)
+               profiles, render, safe, subscription, transcribe, usage)
 
 from . import tools as _tools  # noqa: E402
 
@@ -77,6 +77,11 @@ def _startup():
 
 
 # ================================================================ the gate: who is asking, and are they allowed
+@app.on_event("shutdown")
+def _close_subscription():
+    subscription.connection.close()
+
+
 class Gate:
     """Runs before every request: finds the signed-in user, blocks what needs sign-in, blocks cross-site form
     posts, caps upload size and adds security headers."""
@@ -1299,6 +1304,57 @@ def ai_test(request: Request):
         raise HTTPException(400, str(e))
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, ai.explain(e) or "The AI did not answer: " + _ai_error(e))
+
+
+def _subscription_public(state):
+    return {**state, "active": ai.provider() == "codex", "models": ai.models() if ai.provider() == "codex" else ["default"]}
+
+
+@app.get("/api/ai/subscription")
+def subscription_status(request: Request, refresh: bool = False):
+    _admin(request)
+    return _subscription_public(subscription.connection.status(refresh=refresh))
+
+
+@app.post("/api/ai/subscription/connect")
+def subscription_connect(request: Request):
+    _admin(request)
+    _throttle("subscription:" + ctx.uid(), 8, 600)
+    try:
+        state = subscription.connection.start()
+    except ai.codex.CodexError as e:
+        raise HTTPException(502, str(e))
+    ctx.bump()
+    return _subscription_public(state)
+
+
+@app.post("/api/ai/subscription/cancel")
+def subscription_cancel(request: Request):
+    _admin(request)
+    try:
+        state = subscription.connection.cancel()
+    except ai.codex.CodexError as e:
+        raise HTTPException(502, str(e))
+    ctx.bump()
+    return _subscription_public(state)
+
+
+@app.post("/api/ai/subscription/use")
+def subscription_use(request: Request, body: dict = Body(default={})):
+    _admin(request)
+    _throttle("subtest:" + ctx.uid(), 20, 600)
+    try:
+        models = ai.validate_models(body.get("models") or "default")
+        result = ai.test_codex(models)
+        if ai.provider() != "codex" or ai.models() != models:
+            ai.save("codex", models)
+            usage.forget_all()
+            ctx.bump()
+        return result
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, ai.explain(e) or "The subscription did not answer. Check the connection and model.")
 
 
 # ================================================================ posting, accounts, settings

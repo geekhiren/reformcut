@@ -112,12 +112,8 @@ def public() -> dict:
                           for k, v in PROVIDERS.items()]}
 
 
-def save(provider_id: str, model_ids, address: str = "", new_key=None) -> dict:
-    """Save the choice made in the dashboard. `new_key` None keeps the key that is already there (the page never
-    has it to send back); an empty string removes it."""
-    p = ALIASES.get(str(provider_id or "").strip().lower(), str(provider_id or "").strip().lower())
-    if p not in PROVIDERS:
-        raise ValueError("Choose one of the AI services in the list.")
+def validate_models(model_ids) -> list:
+    """The same model names are accepted when saving settings or testing a subscription."""
     if isinstance(model_ids, str):
         model_ids = model_ids.split(",")
     ms = [str(m).strip()[:120] for m in (model_ids or []) if str(m).strip()][:5]
@@ -125,6 +121,16 @@ def save(provider_id: str, model_ids, address: str = "", new_key=None) -> dict:
         raise ValueError("Enter the model to use.")
     if any(not re.fullmatch(r"[\w.\-:/@]+", m) for m in ms):
         raise ValueError("A model id has letters, digits and . - : / only.")
+    return ms
+
+
+def save(provider_id: str, model_ids, address: str = "", new_key=None) -> dict:
+    """Save the choice made in the dashboard. `new_key` None keeps the key that is already there (the page never
+    has it to send back); an empty string removes it."""
+    p = ALIASES.get(str(provider_id or "").strip().lower(), str(provider_id or "").strip().lower())
+    if p not in PROVIDERS:
+        raise ValueError("Choose one of the AI services in the list.")
+    ms = validate_models(model_ids)
     address = "" if p == "codex" else str(address or "").strip().rstrip("/")[:300]
     if address and not re.fullmatch(r"https?://[^\s]+", address):
         raise ValueError("The address has to start with http:// or https://")
@@ -177,6 +183,16 @@ def list_models(provider_id=None, address=None, with_key=None) -> list:
     else:
         found = [m.get("id", "") for m in data.get("data", []) if isinstance(m, dict)]
     return sorted({m for m in found if m})[:400]
+
+
+def test_codex(model_ids) -> dict:
+    """Test the selected subscription model before replacing any working AI settings."""
+    ms = validate_models(model_ids)
+    text, sent, wrote = codex.run(ms[0], 'Answer with a JSON array that holds the single string "ok".',
+                                  schema={"type": "ARRAY", "items": {"type": "STRING"}})
+    if _parse(text) != ["ok"]:
+        raise AIError("Codex did not return the expected test answer. Try again.")
+    return {"ok": True, "model": ms[0], "tokens": sent + wrote}
 
 
 def test() -> dict:

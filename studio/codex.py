@@ -17,6 +17,7 @@ class CodexError(RuntimeError):
 
 _lock = threading.Lock()
 _status_cache = {}
+_desktop_cache = {}
 DISABLED_FEATURES = ("shell_tool", "unified_exec", "multi_agent", "multi_agent_v2", "apps", "plugins", "hooks",
                      "image_generation", "view_image", "browser_use", "computer_use", "workspace_dependencies",
                      "skill_search", "code_mode", "code_mode_host", "goals")
@@ -25,10 +26,38 @@ LOGIN = "Sign in to Codex with your ChatGPT account: run codex login on the comp
 TIMED_OUT = "Codex timed out. Try a faster model or wait for the current request to finish."
 
 
-def command() -> list[str]:
+def _windows_desktop(timeout=8):
+    """Query the current user's registered app; WindowsApps directory listing can be denied."""
+    cache_key = (os.environ.get("SystemRoot"), os.environ.get("ProgramFiles"))
+    cached = _desktop_cache.get("path")
+    if _desktop_cache.get("key") == cache_key and time.monotonic() - _desktop_cache.get("at", 0) < 30:
+        if not cached or Path(cached).is_file():
+            return cached
+    found = None
+    powershell = Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    try:
+        result = subprocess.run([str(powershell), "-NoProfile", "-NonInteractive", "-Command",
+                                 "Get-AppxPackage -Name OpenAI.Codex | Select-Object -ExpandProperty InstallLocation"],
+                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=min(8, timeout),
+                                creationflags=subprocess.CREATE_NO_WINDOW)
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                path = Path(line.strip()) / "app/resources/codex.exe"
+                if path.is_file():
+                    found = str(path)
+                    break
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    _desktop_cache.update(key=cache_key, at=time.monotonic(), path=found)
+    return found
+
+
+def command(timeout=8) -> list[str]:
     """Find the native executable, including inside npm installs; never leave a launcher process behind."""
     override = os.environ.get("PEAKCUT_CODEX_COMMAND", "").strip()
     found = shutil.which(override or "codex")
+    if not found and not override and sys.platform == "win32":
+        found = _windows_desktop(timeout=timeout)
     if not found and not override and sys.platform == "win32":
         # The desktop app bundles the CLI, even when a new terminal cannot see it on PATH yet.
         base = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "WindowsApps"
@@ -213,7 +242,7 @@ def run(model, prompt, schema=None, image=None, timeout=None) -> tuple[str, int,
                 raise CodexError(TIMED_OUT)
             return left
 
-        executable = command()
+        executable = command(timeout=remaining())
         state = _status(executable, min(10, remaining()))
         if not state["subscription"]:
             raise CodexError(state["error"])

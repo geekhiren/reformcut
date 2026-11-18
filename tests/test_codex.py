@@ -157,6 +157,7 @@ class AdapterTests(unittest.TestCase):
         self.inspect = timeout
         with self.assertRaisesRegex(codex.CodexError, "timed out"):
             codex.run("default", "hello", timeout=0.5)
+        self.assertLessEqual(self.command.call_args.kwargs.get("timeout", 999), 0.5)
         self.inspect = lambda args, kw: None
         self.assertEqual(codex.run("default", "hello")[1:], (20, 3))
 

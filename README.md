@@ -102,18 +102,17 @@ PEAKCUT_AI_KEY=your-key-here
 ### Use your Codex subscription
 
 Install [Codex CLI](https://developers.openai.com/codex/cli) or the Codex desktop app on the computer that runs
-PeakCut. Use a recent CLI supporting `--ignore-user-config` and `--ignore-rules`. In a terminal, sign in with your
-ChatGPT account:
+PeakCut. Use a recent CLI supporting `--ignore-user-config`, `--ignore-rules` and app-server account login.
 
-```powershell
-codex login
-codex login status
-```
-
-Open **Settings, AI**, choose **Codex (ChatGPT subscription)**, keep the model as **default**, then press **Save and
-test**. **Find models** reads the CLI's local model cache; you can also type an available model yourself. The default
-choice lets Codex select a model. No API key is needed. Calls use your subscription's Codex allowance and limits.
+Open **Settings, AI subscription**. If Codex is already signed in, the page shows your account and plan. Otherwise,
+press **Connect ChatGPT**, finish sign-in on the official ChatGPT page, and return to PeakCut. It checks the login
+automatically. Keep the model as **default**, then press **Use this subscription** or **Test subscription**. No API key
+or password is entered into PeakCut. Calls use your subscription's Codex allowance and limits.
 PeakCut refuses an API-key login for this provider and never falls back to API billing.
+
+The account is shared with Codex on this computer. **Connect another account** opens the official login again.
+**Cancel connection** only cancels the pending attempt; it does not sign Codex out. The login link expires after ten
+minutes. For terminal-only setups, `codex login` still works. The original **Settings, AI** route remains supported.
 
 The adapter is Python and invokes the official CLI, which handles login and credential renewal. It runs each
 request separately in a temporary, read-only working directory, with shell execution, web search, apps, plugins,
@@ -129,7 +128,8 @@ PEAKCUT_AI_MODELS=default
 ```
 
 If Codex cannot be found, set `PEAKCUT_CODEX_COMMAND` to the executable's full path. On Windows the adapter also
-looks for the CLI bundled with the Codex desktop app and finds the native binary inside standard npm installations.
+queries Windows' registered desktop application when its executable is absent from PATH, and finds the native
+binary inside standard npm installations.
 
 ## Settings
 
