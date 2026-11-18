@@ -78,6 +78,15 @@ class AdapterTests(unittest.TestCase):
             self.assertIn(f"features.{feature}=false", args)
         self.assertFalse(Path(kw["cwd"]).exists())
 
+    def test_chosen_reasoning_effort_is_sent_to_the_cli(self):
+        codex.run("chosen-model", "hello", reasoning_effort="xhigh")
+        self.assertIn('model_reasoning_effort="xhigh"', self.calls[-1][0])
+
+    def test_invalid_reasoning_effort_does_not_start_codex(self):
+        with self.assertRaises(ValueError):
+            codex.run("chosen-model", "hello", reasoning_effort='high"; run')
+        self.assertFalse(self.calls)
+
     def test_api_login_is_rejected_without_starting_a_turn(self):
         self.login = "Logged in using an API key: sk-private"
         with self.assertRaisesRegex(codex.CodexError, "codex login"):
@@ -228,6 +237,15 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(self.ai.list_models("codex"), ["default", "chosen-model"])
         reason = "Codex subscription usage limit reached. Try again later."
         self.assertEqual(self.ai.explain(codex.CodexError(reason)), reason)
+
+    def test_effort_setting_is_kept_for_text_and_image_requests(self):
+        self.ai.save("codex", "chosen-model", reasoning_effort="high")
+        self.assertEqual(self.ai.current()["reasoning_effort"], "high")
+        with patch.object(codex, "run", return_value=('{"items":["ok"]}', 20, 3)) as run:
+            self.ai.call("chosen-model", "hello", {"type": "ARRAY", "items": {"type": "STRING"}})
+            self.assertEqual(run.call_args.kwargs["reasoning_effort"], "high")
+            self.ai.see("look", b"jpeg")
+            self.assertEqual(run.call_args.kwargs["reasoning_effort"], "high")
 
     def test_an_api_login_or_logged_out_cli_is_not_ready(self):
         with patch.object(codex, "status", return_value={"installed": True, "subscription": False,

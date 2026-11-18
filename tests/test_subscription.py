@@ -171,6 +171,41 @@ class ConnectionTests(unittest.TestCase):
                 self.connection.start()
         self.assertTrue(FakeRPC.instances[-1].closed)
 
+    def test_catalog_reads_all_pages_and_normalizes_model_efforts(self):
+        pages = {None: {"data": [{"id": "one", "model": "model-one", "displayName": "Model One", "isDefault": True,
+                "defaultReasoningEffort": "medium", "supportedReasoningEfforts": [
+                    {"reasoningEffort": "low"}, {"reasoningEffort": "medium"}, {"reasoningEffort": "xhigh"}]}], "nextCursor": "next"},
+                 "next": {"data": [{"model": "model-two", "displayName": "Model Two", "supportedReasoningEfforts": [{"reasoningEffort": "high"}]},
+                                   {"model": "hidden", "hidden": True}], "nextCursor": None}}
+        original = FakeRPC.request
+        def request(client, method, params=None, timeout=10):
+            if method == "model/list":
+                client.calls.append((method, params))
+                return pages[params.get("cursor")]
+            return original(client, method, params, timeout)
+        self.assertTrue(hasattr(self.connection, "catalog"), "The model catalog must be available")
+        with patch.object(FakeRPC, "request", request):
+            result = self.connection.catalog(refresh=True)
+        self.assertEqual([m["id"] for m in result], ["model-one", "model-two"])
+        self.assertEqual(result[0]["efforts"], ["low", "medium", "xhigh"])
+        self.assertEqual(result[0]["default_effort"], "medium")
+        self.assertTrue(result[0]["is_default"])
+        self.assertTrue(FakeRPC.instances[-1].closed)
+
+    def test_failed_refresh_does_not_leave_previous_accounts_catalog_cached(self):
+        original = FakeRPC.request
+        def request(client, method, params=None, timeout=10):
+            if method == "model/list":
+                return {"data": [{"model": "model-one", "supportedReasoningEfforts": [{"reasoningEffort": "low"}]}]}
+            return original(client, method, params, timeout)
+        with patch.object(FakeRPC, "request", request):
+            self.connection.catalog(refresh=True)
+            FakeRPC.account = None
+            with self.assertRaises(codex.CodexError):
+                self.connection.catalog(refresh=True)
+            with self.assertRaises(codex.CodexError):
+                self.connection.catalog()
+
 
 class RPCTests(unittest.TestCase):
     def test_stdio_initialization_account_response_and_process_cleanup(self):
@@ -211,6 +246,9 @@ class RouteTests(unittest.TestCase):
         patch.object(ai, "models", return_value=["default"]).start()
         self.test_model = patch.object(ai, "test_codex", create=True, return_value={"ok": True, "model": "default", "tokens": 2}).start()
         self.save = patch.object(ai, "save", return_value={}).start()
+        self.catalog = patch.object(subscription.connection, "catalog", create=True, return_value=[
+            {"id": "model-one", "label": "Model One", "is_default": True, "default_effort": "low", "efforts": ["low", "medium", "xhigh"]},
+            {"id": "new-model", "label": "New Model", "is_default": False, "default_effort": "low", "efforts": ["low", "high"]}]).start()
         self.addCleanup(patch.stopall)
 
     def test_subscription_status_and_connection_routes(self):
@@ -241,7 +279,40 @@ class RouteTests(unittest.TestCase):
     def test_successful_model_change_is_saved_after_validation(self):
         result = self.client.post("/api/ai/subscription/use", headers=self.origin, json={"models": "new-model"})
         self.assertEqual(result.status_code, 200)
-        self.save.assert_called_once_with("codex", ["new-model"])
+        self.save.assert_called_once_with("codex", ["new-model"], reasoning_effort="")
+
+    def test_catalog_route_returns_actual_model_choices(self):
+        result = self.client.get("/api/ai/subscription/models?refresh=1")
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()["models"][0]["efforts"], ["low", "medium", "xhigh"])
+
+    def test_selected_effort_is_tested_and_saved(self):
+        result = self.client.post("/api/ai/subscription/use", headers=self.origin,
+                                  json={"models": "model-one", "reasoning_effort": "xhigh"})
+        self.assertEqual(result.status_code, 200)
+        self.test_model.assert_called_once_with(["model-one"], reasoning_effort="xhigh")
+        self.save.assert_called_once_with("codex", ["model-one"], reasoning_effort="xhigh")
+        self.catalog.assert_called_once_with(refresh=True)
+
+    def test_legacy_codex_save_validates_inherited_effort_before_writing(self):
+        with patch.object(self.ai, "current", return_value={"reasoning_effort": "xhigh"}):
+            result = self.client.put("/api/ai", headers=self.origin, json={"provider": "codex", "models": "new-model"})
+        self.assertEqual(result.status_code, 400)
+        self.test_model.assert_not_called()
+        self.save.assert_not_called()
+
+    def test_unsupported_effort_is_rejected_before_model_call_or_save(self):
+        result = self.client.post("/api/ai/subscription/use", headers=self.origin,
+                                  json={"models": "new-model", "reasoning_effort": "xhigh"})
+        self.assertEqual(result.status_code, 400)
+        self.test_model.assert_not_called()
+        self.save.assert_not_called()
+
+    def test_unavailable_model_is_rejected_before_model_call(self):
+        result = self.client.post("/api/ai/subscription/use", headers=self.origin,
+                                  json={"models": "not-available", "reasoning_effort": "low"})
+        self.assertEqual(result.status_code, 400)
+        self.test_model.assert_not_called()
 
     def test_invalid_model_is_rejected_before_testing(self):
         result = self.client.post("/api/ai/subscription/use", headers=self.origin, json={"models": 'bad model; "'})
@@ -250,7 +321,7 @@ class RouteTests(unittest.TestCase):
 
     def test_connection_routes_require_signed_in_admin_when_accounts_are_enabled(self):
         with patch.object(self.config, "ACCOUNTS", True):
-            for method, url in (("GET", "/api/ai/subscription"), ("POST", "/api/ai/subscription/connect"),
+            for method, url in (("GET", "/api/ai/subscription"), ("GET", "/api/ai/subscription/models"), ("POST", "/api/ai/subscription/connect"),
                                 ("POST", "/api/ai/subscription/cancel"), ("POST", "/api/ai/subscription/use")):
                 self.assertIn(self.client.request(method, url, headers=self.origin).status_code, (401, 403))
 

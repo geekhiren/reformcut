@@ -1,7 +1,9 @@
 """Connect a ChatGPT account using Codex's official account protocol. Codex keeps all credentials."""
 import atexit
 import json
+import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -123,12 +125,14 @@ class Connection:
         self.cached = None
         self.cached_at = 0
         self.expiry = None
+        self.catalog_cache = None
 
     def _state(self, state, account=None, error=""):
         return {"state": state, "installed": bool(codex.command()), "account": account,
                 "auth_url": self.auth_url if state == "pending" else None, "error": error}
 
     def _stop(self):
+        self.catalog_cache = None
         if self.expiry:
             self.expiry.cancel()
             self.expiry = None
@@ -183,12 +187,65 @@ class Connection:
             try:
                 client = RPC()
                 account = _account(client.request("account/read", {"refreshToken": False}))
+                if self.catalog_cache and account != self.catalog_cache["account"]:
+                    self.catalog_cache = None
                 return self._remember(self._state("connected" if account is not None else "disconnected", account))
             except codex.CodexError as error:
                 return self._remember(self._state("error", error=str(error)))
             finally:
                 if client:
                     client.close()
+
+    def catalog(self, refresh=False):
+        """Models and efforts advertised for the signed-in account, with bounded pagination."""
+        with self.lock:
+            scope = (tuple(codex.command()), os.environ.get("CODEX_HOME"))
+            cached = self.catalog_cache
+            if not refresh and cached and cached["scope"] == scope and time.monotonic() - cached["at"] < 60:
+                return cached["models"]
+            self.catalog_cache = None
+            client = RPC()
+            try:
+                account = _account(client.request("account/read", {"refreshToken": False}))
+                if account is None:
+                    raise codex.CodexError("Connect your ChatGPT account before choosing a model.")
+                models, cursor, seen = [], None, set()
+                for _ in range(4):
+                    params = {"limit": 100, "includeHidden": False, "modelProvider": "openai"}
+                    if cursor:
+                        params["cursor"] = cursor
+                    page = client.request("model/list", params)
+                    if not isinstance(page.get("data"), list):
+                        raise codex.CodexError("Codex did not return its model list. Check the connection and try again.")
+                    for row in page["data"]:
+                        if not isinstance(row, dict) or row.get("hidden"):
+                            continue
+                        model = row.get("model") or row.get("id")
+                        if not isinstance(model, str) or not re.fullmatch(r"[\w.][\w.\-:/@]{0,119}", model):
+                            continue
+                        advertised = row.get("supportedReasoningEfforts")
+                        efforts = list(dict.fromkeys(e.get("reasoningEffort") for e in (advertised if isinstance(advertised, list) else [])
+                                      if isinstance(e, dict) and isinstance(e.get("reasoningEffort"), str)
+                                      and e["reasoningEffort"] in codex.REASONING_EFFORTS))
+                        default = row.get("defaultReasoningEffort")
+                        models.append({"id": model, "label": str(row.get("displayName") or model)[:160],
+                                       "is_default": bool(row.get("isDefault")), "default_effort": default if default in efforts else "",
+                                       "efforts": efforts})
+                    cursor = page.get("nextCursor")
+                    if not cursor:
+                        break
+                    if not isinstance(cursor, str) or cursor in seen:
+                        raise codex.CodexError("Codex returned an incomplete model list. Refresh and try again.")
+                    seen.add(cursor)
+                else:
+                    raise codex.CodexError("Codex returned too many model pages. Refresh and try again.")
+                models = list({m["id"]: m for m in models}.values())
+                if not models:
+                    raise codex.CodexError("Codex listed no available models for this account. Check the connection.")
+                self.catalog_cache = {"scope": scope, "at": time.monotonic(), "account": account, "models": models}
+                return models
+            finally:
+                client.close()
 
     def start(self):
         with self.lock:
@@ -210,6 +267,7 @@ class Connection:
                 self.expiry.daemon = True
                 self.expiry.start()
                 self.cached = None
+                self.catalog_cache = None
                 return self._state("pending")
             except Exception:
                 client.close()

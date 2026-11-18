@@ -106,7 +106,10 @@ PeakCut. Use a recent CLI supporting `--ignore-user-config`, `--ignore-rules` an
 
 Open **Settings, AI subscription**. If Codex is already signed in, the page shows your account and plan. Otherwise,
 press **Connect ChatGPT**, finish sign-in on the official ChatGPT page, and return to PeakCut. It checks the login
-automatically. Keep the model as **default**, then press **Use this subscription** or **Test subscription**. No API key
+automatically. Choose an available model from the dropdown (or **Automático** to let Codex choose) and a supported
+reasoning effort. The effort list updates with the selected model: Baixo, Médio, Alto, Extra alto and any other levels
+that model offers. Keep **Padrão do modelo** for its default effort. Press **Usar esta assinatura**, **Salvar e testar**
+or **Testar assinatura**. Your choice is saved only after a successful test and is used for text and image requests. No API key
 or password is entered into PeakCut. Calls use your subscription's Codex allowance and limits.
 PeakCut refuses an API-key login for this provider and never falls back to API billing.
 

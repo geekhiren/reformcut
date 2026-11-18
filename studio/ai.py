@@ -67,6 +67,7 @@ def current() -> dict:
     p = str(d.get("provider") or config.AI_PROVIDER or "").strip().lower()
     p = ALIASES.get(p, p)
     return {"provider": p,
+            "reasoning_effort": str(d.get("reasoning_effort", config.env("PEAKCUT_CODEX_REASONING_EFFORT", ""))).strip().lower() if p == "codex" else "",
             "models": list(d["models"]) if d.get("provider") else list(config.AI_MODELS),
             "base_url": "" if p == "codex" else (str(d.get("base_url") or "") if d.get("provider") else config.AI_BASE_URL).rstrip("/"),
             "key": "" if p == "codex" else str(d["key"]) if d.get("provider") and "key" in d else config.ai_key()}
@@ -105,6 +106,7 @@ def public() -> dict:
     its last four characters so the owner can tell which key it is."""
     c = current()
     return {"provider": c["provider"], "models": c["models"], "base_url": c["base_url"], "has_key": bool(c["key"]),
+            "reasoning_effort": c["reasoning_effort"],
             "key_hint": c["key"][-4:] if len(c["key"]) >= 12 else "", "ready": ready(), "label": label(),
             "saved_here": bool(_from_dashboard().get("provider")),
             "codex": codex.status() if c["provider"] == "codex" else None,
@@ -124,7 +126,7 @@ def validate_models(model_ids) -> list:
     return ms
 
 
-def save(provider_id: str, model_ids, address: str = "", new_key=None) -> dict:
+def save(provider_id: str, model_ids, address: str = "", new_key=None, reasoning_effort=None) -> dict:
     """Save the choice made in the dashboard. `new_key` None keeps the key that is already there (the page never
     has it to send back); an empty string removes it."""
     p = ALIASES.get(str(provider_id or "").strip().lower(), str(provider_id or "").strip().lower())
@@ -137,6 +139,7 @@ def save(provider_id: str, model_ids, address: str = "", new_key=None) -> dict:
     if p == "custom" and not address:
         raise ValueError("A custom service needs its address, for example http://127.0.0.1:1234/v1")
     old = current()
+    effort = codex.validate_effort(old["reasoning_effort"] if reasoning_effort is None and old["provider"] == p else reasoning_effort) if p == "codex" else ""
     k = old["key"] if new_key is None and old["provider"] == p else str(new_key or "").strip()[:400]
     if p == "codex":
         k = ""
@@ -145,7 +148,7 @@ def save(provider_id: str, model_ids, address: str = "", new_key=None) -> dict:
     with _lock:
         f = _file()
         tmp = f.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"provider": p, "models": ms, "base_url": address, "key": k}), encoding="utf-8")
+        tmp.write_text(json.dumps({"provider": p, "models": ms, "base_url": address, "key": k, "reasoning_effort": effort}), encoding="utf-8")
         try:
             os.chmod(tmp, 0o600)        # the key is only for whoever runs the server
         except OSError:
@@ -185,14 +188,15 @@ def list_models(provider_id=None, address=None, with_key=None) -> list:
     return sorted({m for m in found if m})[:400]
 
 
-def test_codex(model_ids) -> dict:
+def test_codex(model_ids, reasoning_effort=None) -> dict:
     """Test the selected subscription model before replacing any working AI settings."""
     ms = validate_models(model_ids)
+    effort = codex.validate_effort(current()["reasoning_effort"] if reasoning_effort is None else reasoning_effort)
     text, sent, wrote = codex.run(ms[0], 'Answer with a JSON array that holds the single string "ok".',
-                                  schema={"type": "ARRAY", "items": {"type": "STRING"}})
+                                  schema={"type": "ARRAY", "items": {"type": "STRING"}}, reasoning_effort=effort)
     if _parse(text) != ["ok"]:
         raise AIError("Codex did not return the expected test answer. Try again.")
-    return {"ok": True, "model": ms[0], "tokens": sent + wrote}
+    return {"ok": True, "model": ms[0], "reasoning_effort": effort, "tokens": sent + wrote}
 
 
 def test() -> dict:
@@ -330,7 +334,7 @@ def call(model: str, prompt: str, schema: dict, timeout: float | None = None):
     answer must not stop the recording."""
     how = PROVIDERS[provider()][2]
     if how == "codex":
-        text, sent, wrote = codex.run(model, prompt, schema=schema, timeout=timeout)
+        text, sent, wrote = codex.run(model, prompt, schema=schema, timeout=timeout, reasoning_effort=current()["reasoning_effort"])
         return _parse(text), sent, wrote
     return {"gemini": _gemini, "openai": _openai, "anthropic": _anthropic}[how](model, prompt, schema, timeout)
 
@@ -345,7 +349,7 @@ def see(prompt: str, image: bytes, timeout: float | None = None) -> tuple[str, i
         return "", 0, 0
     model = models()[0]
     if provider() == "codex":
-        return codex.run(model, prompt, image=image, timeout=timeout)
+        return codex.run(model, prompt, image=image, timeout=timeout, reasoning_effort=current()["reasoning_effort"])
     b64 = base64.b64encode(image).decode()
     how = PROVIDERS[provider()][2]
     if how == "gemini":

@@ -24,6 +24,14 @@ DISABLED_FEATURES = ("shell_tool", "unified_exec", "multi_agent", "multi_agent_v
 INSTALL = "Codex was not found. Install Codex CLI, or set PEAKCUT_CODEX_COMMAND to its executable."
 LOGIN = "Sign in to Codex with your ChatGPT account: run codex login on the computer running PeakCut."
 TIMED_OUT = "Codex timed out. Try a faster model or wait for the current request to finish."
+REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+
+
+def validate_effort(value) -> str:
+    effort = str(value or "").strip().lower()
+    if effort and effort not in REASONING_EFFORTS:
+        raise ValueError("Choose a reasoning effort from the list.")
+    return effort
 
 
 def _windows_desktop(timeout=8):
@@ -229,8 +237,9 @@ def _answer(result):
     return text.strip(), sent, wrote
 
 
-def run(model, prompt, schema=None, image=None, timeout=None) -> tuple[str, int, int]:
+def run(model, prompt, schema=None, image=None, timeout=None, reasoning_effort=None) -> tuple[str, int, int]:
     """One stateless request. The deadline includes waiting behind another request and checking login."""
+    effort = validate_effort(reasoning_effort)
     seconds = float(timeout) if timeout is not None else 180.0
     deadline = time.monotonic() + seconds
     if seconds <= 0 or not _lock.acquire(timeout=max(0, seconds)):
@@ -266,6 +275,8 @@ def run(model, prompt, schema=None, image=None, timeout=None) -> tuple[str, int,
             args += ["-c", "agents.enabled=false", "-c", "apps._default.enabled=false"]
             if model and model != "default":
                 args += ["--model", model]
+            if effort:
+                args += ["-c", "model_reasoning_effort=" + json.dumps(effort)]
             if schema is not None:
                 shape = {"type": "object", "properties": {"items": _schema(schema)},
                          "required": ["items"], "additionalProperties": False}

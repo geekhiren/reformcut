@@ -1269,10 +1269,14 @@ def ai_get(request: Request):
 @app.put("/api/ai")
 def ai_put(request: Request, body: dict = Body(...)):
     _admin(request)
+    if str(body.get("provider") or "").strip().lower() == "codex":
+        subscription_use(request, body)
+        return ai.public()
     k = body.get("key")
     try:
         out = ai.save(body.get("provider"), body.get("models"), body.get("base_url") or "",
-                      None if k is None or (isinstance(k, str) and not k.strip() and not body.get("remove_key")) else str(k))
+                      None if k is None or (isinstance(k, str) and not k.strip() and not body.get("remove_key")) else str(k),
+                      reasoning_effort=body.get("reasoning_effort"))
     except (ValueError, TypeError) as e:
         raise HTTPException(400, str(e))
     usage.forget_all()
@@ -1307,13 +1311,24 @@ def ai_test(request: Request):
 
 
 def _subscription_public(state):
-    return {**state, "active": ai.provider() == "codex", "models": ai.models() if ai.provider() == "codex" else ["default"]}
+    return {**state, "active": ai.provider() == "codex", "models": ai.models() if ai.provider() == "codex" else ["default"],
+            "reasoning_effort": ai.current()["reasoning_effort"]}
 
 
 @app.get("/api/ai/subscription")
 def subscription_status(request: Request, refresh: bool = False):
     _admin(request)
     return _subscription_public(subscription.connection.status(refresh=refresh))
+
+
+@app.get("/api/ai/subscription/models")
+def subscription_models(request: Request, refresh: bool = False):
+    _admin(request)
+    _throttle("submodels:" + ctx.uid(), 30, 600)
+    try:
+        return {"models": subscription.connection.catalog(refresh=refresh)}
+    except ai.codex.CodexError as e:
+        raise HTTPException(502, str(e))
 
 
 @app.post("/api/ai/subscription/connect")
@@ -1345,9 +1360,18 @@ def subscription_use(request: Request, body: dict = Body(default={})):
     _throttle("subtest:" + ctx.uid(), 20, 600)
     try:
         models = ai.validate_models(body.get("models") or "default")
-        result = ai.test_codex(models)
-        if ai.provider() != "codex" or ai.models() != models:
-            ai.save("codex", models)
+        effort = ai.codex.validate_effort(body.get("reasoning_effort", ai.current()["reasoning_effort"]))
+        catalog = subscription.connection.catalog(refresh=True)
+        default = next((m for m in catalog if m["is_default"]), catalog[0])
+        for model in models:
+            choice = default if model == "default" else next((m for m in catalog if m["id"] == model), None)
+            if choice is None:
+                raise ValueError("Choose an available model from the list.")
+            if effort and effort not in choice["efforts"]:
+                raise ValueError("This model does not support the selected reasoning effort. Choose another level.")
+        result = ai.test_codex(models, reasoning_effort=effort)
+        if ai.provider() != "codex" or ai.models() != models or ai.current()["reasoning_effort"] != effort:
+            ai.save("codex", models, reasoning_effort=effort)
             usage.forget_all()
             ctx.bump()
         return result
