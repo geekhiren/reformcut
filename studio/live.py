@@ -82,7 +82,10 @@ def resolve(url: str) -> dict:
     title = info.get("title") or ""
     if "(live)" in title and info.get("description"):  # Twitch puts the real stream title here
         title = str(info["description"]).splitlines()[0][:120]
-    return {"urls": [f["url"] for f in fmts], "title": title,
+    urls = [f["url"] for f in fmts if isinstance(f, dict) and f.get("url")]
+    if not urls:
+        raise NotLive("Could not open the live stream.")
+    return {"urls": urls, "title": title,
             "uploader": info.get("uploader") or info.get("channel") or ""}
 
 
@@ -228,9 +231,10 @@ class Session:
         self.stop_flag.set()
         with self.lock:
             self.job.update(status="done", stage=note)
+            proc = self.proc
         jobs.save(self.job)
-        if self.proc and self.proc.poll() is None:
-            self.proc.terminate()
+        if proc and proc.poll() is None:
+            proc.terminate()
 
     def _ingest(self):
         """Record the stream. However this ends, even when ffmpeg cannot start at all, the session is marked as
@@ -256,6 +260,8 @@ class Session:
                     break
                 self.stop_flag.wait(10)
                 continue
+            if self.stop_flag.is_set():     # stop() came while the stream address was being looked up
+                break
             if not self.job.get("uploader"):
                 self.job.update(title=info["title"], uploader=info["uploader"])
             self.part += 1
@@ -272,11 +278,20 @@ class Session:
                     "-segment_list_type", "csv", f"{p}_%05d.ts",
                     "-map", a_in, "-vn", "-ac", "1", "-ar", str(SR), "-f", "s16le", "pipe:1"]
             with open(self.dir / "ffmpeg.log", "ab") as errlog:
-                self.proc = subprocess.Popen(cmd, cwd=self.buf, stdout=subprocess.PIPE, stderr=errlog,
-                                             creationflags=media.NO_WINDOW)
+                proc = subprocess.Popen(cmd, cwd=self.buf, stdout=subprocess.PIPE, stderr=errlog,
+                                        creationflags=media.NO_WINDOW)
+                with self.lock:               # same lock stop() takes, so stop() always sees this process
+                    self.proc = proc
+                    stopped = self.stop_flag.is_set()
+                if stopped:
+                    proc.terminate()
                 got = 0
                 while True:
-                    data = self.proc.stdout.read(SR * 2)  # one second of 16-bit mono
+                    if self.stop_flag.is_set():
+                        if proc.poll() is None:
+                            proc.terminate()
+                        break
+                    data = proc.stdout.read(SR * 2)  # one second of 16-bit mono
                     if not data:
                         break
                     data = data[: len(data) // 2 * 2]
@@ -287,12 +302,16 @@ class Session:
                         self.pending += data
                         self.samples += len(data) // 2
                         self.db.append(level)
-                self.proc.wait()
+                proc.stdout.close()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
             fails = 0 if got > SR * 2 * 20 else fails + 1
             if fails >= 3:
                 break
             self.stop_flag.wait(3)
-        self.ended = True
 
     def _scan_segments(self):
         """Pick up buffer pieces ffmpeg has finished writing."""
