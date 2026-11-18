@@ -1,7 +1,7 @@
 """Live recording: a live answer with no stream URL, a stop during the stream lookup, and wait timeout fallback.
 Runs against the code directly with its own empty data folder, and never starts a real ffmpeg or contacts a site."""
 import os, subprocess, sys, tempfile, threading, time
-os.environ["PEAKCUT_DATA"] = tempfile.mkdtemp(prefix="pc-live-"); os.environ["DATABASE_URL"] = ""
+os.environ["REFORMCUT_DATA"] = tempfile.mkdtemp(prefix="pc-live-"); os.environ["DATABASE_URL"] = ""
 sys.path.insert(0, ".")
 import yt_dlp
 from studio import auth, creators, ctx, db, jobs, live
@@ -99,5 +99,5 @@ with ctx.as_user(u.id):
     check("a hung ffmpeg process is force-killed after wait timeout", bool(killed) and done3, f"killed={killed} ended={s3.ended}")
 
 print("ALL PASSED" if not fails else f"{len(fails)} failed")
-import shutil; shutil.rmtree(os.environ["PEAKCUT_DATA"], ignore_errors=True)
+import shutil; shutil.rmtree(os.environ["REFORMCUT_DATA"], ignore_errors=True)
 sys.exit(1 if fails else 0)

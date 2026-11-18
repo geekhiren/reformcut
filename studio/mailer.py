@@ -1,8 +1,8 @@
 """Sending account emails (verify your address, reset your password) over SMTP.
 
 Works with any provider that offers SMTP: Resend, Postmark, Brevo, Amazon SES, Google Workspace and so on. Set
-PEAKCUT_SMTP_HOST, PEAKCUT_SMTP_PORT (587), PEAKCUT_SMTP_USER, PEAKCUT_SMTP_PASSWORD_FILE (a file holding the
-password or API key) and PEAKCUT_MAIL_FROM ("Reform Cut <hello@yourdomain.com>"). Without them nothing is sent and the
+REFORMCUT_SMTP_HOST, REFORMCUT_SMTP_PORT (587), REFORMCUT_SMTP_USER, REFORMCUT_SMTP_PASSWORD_FILE (a file holding the
+password or API key) and REFORMCUT_MAIL_FROM ("Reform Cut <hello@yourdomain.com>"). Without them nothing is sent and the
 link is written to the server log instead, which is enough for running Reform Cut on your own machine."""
 import html
 import logging
@@ -14,7 +14,7 @@ from email.utils import formataddr, getaddresses, make_msgid, parseaddr
 
 from . import config
 
-log = logging.getLogger("peakcut.mail")
+log = logging.getLogger("reformcut.mail")
 
 
 def ready() -> bool:
@@ -22,7 +22,7 @@ def ready() -> bool:
 
 
 LOGO = config.ROOT / "web" / "brand" / "logo-email.png"   # PNG: email apps don't show SVG
-LOGO_CID = "peakcut-logo"
+LOGO_CID = "reformcut-logo"
 
 
 def _html(title: str, intro: str, button: str, link: str, outro: str, logo_src: str = "cid:" + LOGO_CID) -> str:
@@ -89,7 +89,7 @@ def send(to: str, subject: str, title: str, intro: str, button: str, link: str, 
     msg.add_alternative(_html(title, intro, button, link, outro), subtype="html")
     if LOGO.is_file():   # the logo travels inside the email, so it shows without loading anything from the web
         msg.get_payload()[1].add_related(LOGO.read_bytes(), maintype="image", subtype="png", cid=f"<{LOGO_CID}>",
-                                         filename="peakcut.png", disposition="inline")
+                                         filename="reformcut.png", disposition="inline")
 
     def work():
         try:

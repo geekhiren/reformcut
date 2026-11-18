@@ -2,7 +2,7 @@
 
 Runs against the code directly, with its own empty data folder. Nothing is downloaded."""
 import os, sys, tempfile
-os.environ["PEAKCUT_DATA"] = tempfile.mkdtemp(prefix="pc-moments-")
+os.environ["REFORMCUT_DATA"] = tempfile.mkdtemp(prefix="pc-moments-")
 sys.path.insert(0, ".")
 from studio import clean, jobs, media, stamps
 fails = []

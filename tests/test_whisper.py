@@ -11,10 +11,10 @@ from unittest.mock import patch
 
 sys.path.insert(0, ".")
 DATA = tempfile.TemporaryDirectory(prefix="pc-whisper-")
-os.environ["PEAKCUT_DATA"] = DATA.name
+os.environ["REFORMCUT_DATA"] = DATA.name
 os.environ["DATABASE_URL"] = ""
-os.environ["PEAKCUT_ASR_BACKEND"] = "whisper"
-os.environ["PEAKCUT_WHISPER_MODEL"] = "medium"
+os.environ["REFORMCUT_ASR_BACKEND"] = "whisper"
+os.environ["REFORMCUT_WHISPER_MODEL"] = "medium"
 
 import numpy as np
 from studio import transcribe
@@ -43,7 +43,7 @@ class MixedSpeechTests(unittest.TestCase):
     def test_remote_worker_rejects_whisper_before_warmup(self):
         from studio import asr_worker
         with patch.object(asr_worker, "TOKEN", "test-token"), patch.object(transcribe, "_recognizer") as warmup, patch.object(asr_worker.uvicorn, "run") as serve:
-            with self.assertRaisesRegex(SystemExit, "PEAKCUT_ASR_BACKEND=parakeet"):
+            with self.assertRaisesRegex(SystemExit, "REFORMCUT_ASR_BACKEND=parakeet"):
                 asr_worker.main()
             warmup.assert_not_called()
             serve.assert_not_called()

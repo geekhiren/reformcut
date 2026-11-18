@@ -1,4 +1,4 @@
-"""Abuse and limit tests against a throwaway PeakCut server. Usage: test_abuse.py <base url> <project root>"""
+"""Abuse and limit tests against a throwaway Reform Cut server. Usage: test_abuse.py <base url> <project root>"""
 import sys
 
 import httpx
@@ -81,7 +81,7 @@ check("not-modified never bypasses sign-in", httpx.Client(base_url=BASE).get("/a
 import subprocess  # noqa: E402
 probe = """
 import os
-os.environ["PEAKCUT_CLIENT_IP_HEADER"] = "CF-Connecting-IP"; os.environ["PEAKCUT_TRUST_PROXY"] = "1"
+os.environ["REFORMCUT_CLIENT_IP_HEADER"] = "CF-Connecting-IP"; os.environ["REFORMCUT_TRUST_PROXY"] = "1"
 from studio import server
 from starlette.datastructures import Headers
 class R:
@@ -96,7 +96,7 @@ check("a forged visitor header is ignored, the CDN's is used", got, ["203.0.113.
 # ---- X-Forwarded-For: only believed from a proxy on a private address, across repeated headers and Uvicorn proxy_headers
 probe_xff = """
 import os
-os.environ["PEAKCUT_CLIENT_IP_HEADER"] = "CF-Connecting-IP"
+os.environ["REFORMCUT_CLIENT_IP_HEADER"] = "CF-Connecting-IP"
 from studio import server
 from starlette.datastructures import Headers
 class R:
@@ -110,7 +110,7 @@ cases = [
 ]
 out = []
 for trust, peer, h in cases:
-    os.environ["PEAKCUT_TRUST_PROXY"] = trust
+    os.environ["REFORMCUT_TRUST_PROXY"] = trust
     out.append(server._ip(R(peer, h)))
 print(" ".join(out))
 """
@@ -121,7 +121,7 @@ check("the rightmost forwarded hop is believed only from a private proxy", got_x
 probe_uvi = """
 import asyncio, os
 from unittest import mock
-os.environ["PEAKCUT_CLIENT_IP_HEADER"] = "CF-Connecting-IP"; os.environ["PEAKCUT_TRUST_PROXY"] = "1"
+os.environ["REFORMCUT_CLIENT_IP_HEADER"] = "CF-Connecting-IP"; os.environ["REFORMCUT_TRUST_PROXY"] = "1"
 from fastapi import Request
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from studio import server
@@ -139,7 +139,7 @@ async def go():
     ]:
         await mw({"type": "http", "client": (peer, 1234), "headers": hdrs, "scheme": "http"}, None, None)
 asyncio.run(go())
-os.environ["PEAKCUT_TRUST_PROXY"] = "0"
+os.environ["REFORMCUT_TRUST_PROXY"] = "0"
 with mock.patch.object(server.uvicorn, "run", side_effect=lambda *a, **k: captured.update(k)):
     server.main()
 seen.append(str(captured.get("proxy_headers")))

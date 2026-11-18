@@ -1,7 +1,7 @@
 """Hinglish creators are heard by Sarvam AI: words come back in Roman letters, spread over each phrase, on the
 stream's own clock. Sarvam is replaced by a stand-in, so nothing leaves this machine."""
 import os, sys, tempfile
-os.environ["PEAKCUT_DATA"] = tempfile.mkdtemp(prefix="pc-sarvam-"); os.environ["DATABASE_URL"] = ""
+os.environ["REFORMCUT_DATA"] = tempfile.mkdtemp(prefix="pc-sarvam-"); os.environ["DATABASE_URL"] = ""
 os.environ["SARVAM_API_KEY"] = "test-key-123"
 sys.path.insert(0, ".")
 import numpy as np
@@ -53,5 +53,5 @@ check("...anything else is English", jobs.clean_options({"language": "xx"})["lan
 check("videos are English unless chosen", jobs.DEFAULTS["language"] == "en")
 
 print("ALL PASSED" if not fails else f"{len(fails)} failed")
-import shutil; shutil.rmtree(os.environ["PEAKCUT_DATA"], ignore_errors=True)
+import shutil; shutil.rmtree(os.environ["REFORMCUT_DATA"], ignore_errors=True)
 sys.exit(1 if fails else 0)

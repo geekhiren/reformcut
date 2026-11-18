@@ -33,7 +33,7 @@ def fails_with(call, status, word=""):
 
 
 def main(data):
-    os.environ.update(PEAKCUT_DATA=data, DATABASE_URL="", PEAKCUT_ACCOUNTS="0")
+    os.environ.update(REFORMCUT_DATA=data, DATABASE_URL="", REFORMCUT_ACCOUNTS="0")
     from studio import auth, brain, ctx, db, jobs, posting, server
 
     db.init()

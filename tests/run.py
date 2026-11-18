@@ -2,7 +2,7 @@
 
     python tests/run.py
 
-Starts PeakCut on a spare port with an empty, temporary data folder, runs the tests against it, then stops it and
+Starts Reform Cut on a spare port with an empty, temporary data folder, runs the tests against it, then stops it and
 deletes the folder. Your real data and your running server are never touched. No AI key is needed: the tests cover accounts, permissions, limits and the queue, not clip quality."""
 import os
 import shutil
@@ -14,20 +14,20 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PORT = int(os.environ.get("PEAKCUT_TEST_PORT", "8799"))
+PORT = int(os.environ.get("REFORMCUT_TEST_PORT", "8799"))
 BASE = f"http://127.0.0.1:{PORT}"
 
 
 def main() -> int:
-    data = Path(tempfile.mkdtemp(prefix="peakcut-test-"))
-    env = {**os.environ, "PEAKCUT_DATA": str(data), "PEAKCUT_PORT": str(PORT), "PEAKCUT_PUBLIC_URL": BASE,
-           "PEAKCUT_HOST": "127.0.0.1", "PEAKCUT_AUTO_RELOAD": "0", "DATABASE_URL": "",
-           "PEAKCUT_ACCOUNTS": "1", "PEAKCUT_FETCH_MODEL": "0", "PEAKCUT_UPDATE_CHECK": "0",                   # these tests are about people signing in; tests/test_local.py covers the default
+    data = Path(tempfile.mkdtemp(prefix="reformcut-test-"))
+    env = {**os.environ, "REFORMCUT_DATA": str(data), "REFORMCUT_PORT": str(PORT), "REFORMCUT_PUBLIC_URL": BASE,
+           "REFORMCUT_HOST": "127.0.0.1", "REFORMCUT_AUTO_RELOAD": "0", "DATABASE_URL": "",
+           "REFORMCUT_ACCOUNTS": "1", "REFORMCUT_FETCH_MODEL": "0", "REFORMCUT_UPDATE_CHECK": "0",                   # these tests are about people signing in; tests/test_local.py covers the default
            # nothing outside this machine is contacted: no AI, no email, no Google sign-in
-           "PEAKCUT_SMTP_HOST": "", "PEAKCUT_VERIFY_EMAIL": "1",   # the tests cover the confirm-your-email rule
+           "REFORMCUT_SMTP_HOST": "", "REFORMCUT_VERIFY_EMAIL": "1",   # the tests cover the confirm-your-email rule
            "GOOGLE_CLIENT_ID": "", "GOOGLE_CLIENT_SECRET": "", "GOOGLE_CLIENT_FILE": "", "PYTHONUNBUFFERED": "1",
-           "PEAKCUT_AI_KEY": "", "PEAKCUT_AI_KEY_FILE": "", "PEAKCUT_AI_MODELS": "",
-           "PEAKCUT_UPLOAD_PART_MB": "5", "PEAKCUT_MAX_UPLOAD_MB": "64"}
+           "REFORMCUT_AI_KEY": "", "REFORMCUT_AI_KEY_FILE": "", "REFORMCUT_AI_MODELS": "",
+           "REFORMCUT_UPLOAD_PART_MB": "5", "REFORMCUT_MAX_UPLOAD_MB": "64"}
     log = data / "server.log"
     failed = []
     with log.open("w", encoding="utf-8") as out:
@@ -72,7 +72,8 @@ def main() -> int:
                 ("long logs, the machine monitor, failed recordings, admin day totals", ["tests/test_robustness.py"]),
                 ("live recording stops and empty stream URLs", ["tests/test_live.py"]),
                 ("post text: write again with AI, edit, post without re-making", ["tests/test_post_text.py"]),
-                ("speech models for other languages: Arabic, downloads, the second machine", ["tests/test_speech.py"])]
+                ("speech models for other languages: Arabic, downloads, the second machine", ["tests/test_speech.py"]),
+                ("the old name: PEAKCUT_ settings and peakcut.db carry on working", ["tests/test_rename.py"])]
         for name, args in runs:
             print(f"\n=== {name} ===", flush=True)
             r = subprocess.run([sys.executable, *args], cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")

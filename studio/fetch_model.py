@@ -45,7 +45,7 @@ def folder(lang: str = DEFAULT):
 
 
 def _whisper(lang) -> bool:
-    """English is heard by local Whisper instead of Parakeet when PEAKCUT_ASR_BACKEND=whisper."""
+    """English is heard by local Whisper instead of Parakeet when REFORMCUT_ASR_BACKEND=whisper."""
     return lang == DEFAULT and config.ASR_BACKEND == "whisper"
 
 

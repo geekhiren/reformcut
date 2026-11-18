@@ -10,10 +10,10 @@ import tempfile
 import time
 from pathlib import Path
 
-os.environ["PEAKCUT_DATA"] = tempfile.mkdtemp(prefix="pc-speech-")
-os.environ.pop("PEAKCUT_MODELS", None)          # models are made and removed: only ever inside this test's folder
-os.environ.update(DATABASE_URL="", PEAKCUT_ACCOUNTS="0", PEAKCUT_FETCH_MODEL="0", PEAKCUT_AI_KEY="", PEAKCUT_AI_KEY_FILE="",
-                  PEAKCUT_PUBLIC_URL="http://127.0.0.1:8765")
+os.environ["REFORMCUT_DATA"] = tempfile.mkdtemp(prefix="pc-speech-")
+os.environ.pop("REFORMCUT_MODELS", None)          # models are made and removed: only ever inside this test's folder
+os.environ.update(DATABASE_URL="", REFORMCUT_ACCOUNTS="0", REFORMCUT_FETCH_MODEL="0", REFORMCUT_AI_KEY="", REFORMCUT_AI_KEY_FILE="",
+                  REFORMCUT_PUBLIC_URL="http://127.0.0.1:8765")
 sys.path.insert(0, ".")
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -32,7 +32,7 @@ def check(name, got, want=True):
     ok or fails.append(name)
 
 
-assert str(config.MODELS_DIR).startswith(os.environ["PEAKCUT_DATA"]), "the test must only touch its own folder"
+assert str(config.MODELS_DIR).startswith(os.environ["REFORMCUT_DATA"]), "the test must only touch its own folder"
 downloads = []
 
 
@@ -184,5 +184,5 @@ check("a machine with the Arabic model is used", transcribe._decode_remote(piece
 httpx.post = real_post
 
 print("ALL PASSED" if not fails else f"{len(fails)} failed")
-shutil.rmtree(os.environ["PEAKCUT_DATA"], ignore_errors=True)
+shutil.rmtree(os.environ["REFORMCUT_DATA"], ignore_errors=True)
 sys.exit(1 if fails else 0)

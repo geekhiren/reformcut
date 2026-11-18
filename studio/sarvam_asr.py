@@ -12,7 +12,7 @@ import numpy as np
 from . import config
 
 URL = "https://api.sarvam.ai/speech-to-text"
-MODEL = config.env("PEAKCUT_SARVAM_MODEL", "saaras:v4")
+MODEL = config.env("REFORMCUT_SARVAM_MODEL", "saaras:v4")
 SR = 16000
 
 

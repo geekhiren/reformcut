@@ -1,6 +1,6 @@
 """Every automatic post names the streamer the clip came from, so credit is never forgotten."""
 import os, sys, tempfile
-os.environ["PEAKCUT_DATA"] = tempfile.mkdtemp(prefix="pc-credit-"); os.environ["DATABASE_URL"] = ""
+os.environ["REFORMCUT_DATA"] = tempfile.mkdtemp(prefix="pc-credit-"); os.environ["DATABASE_URL"] = ""
 sys.path.insert(0, ".")
 from studio import posting
 fails = []
@@ -32,5 +32,5 @@ check("a video with no creator shows its channel as the credit", jobs.public(job
 check("the page and the post agree", posting.credit_line(yt) == "🎥 Credit: @TypicalGamer" and posting.credit_line(off) == "")
 
 print("ALL PASSED" if not fails else f"{len(fails)} failed")
-import shutil; shutil.rmtree(os.environ["PEAKCUT_DATA"], ignore_errors=True)
+import shutil; shutil.rmtree(os.environ["REFORMCUT_DATA"], ignore_errors=True)
 sys.exit(1 if fails else 0)

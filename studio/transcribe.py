@@ -1,9 +1,9 @@
 """Speech to text with word timestamps, through sherpa-onnx: Parakeet 0.6b for English, and one model per other
 spoken language (see MODELS in fetch_model.py). Each language has its own copies of its model; one that has not
 been used for a while is put away to free the memory (English stays).
-Or, with PEAKCUT_ASR_BACKEND=whisper, local Whisper for English and mixed speech; Hindi/Hinglish can go to Sarvam AI.
+Or, with REFORMCUT_ASR_BACKEND=whisper, local Whisper for English and mixed speech; Hindi/Hinglish can go to Sarvam AI.
 
-It runs in one of two places. On this machine's processors (the default), or, when PEAKCUT_ASR_URL is set, on a
+It runs in one of two places. On this machine's processors (the default), or, when REFORMCUT_ASR_URL is set, on a
 separate machine with a graphics card (studio/asr_worker.py), which does the same work many times faster. If that
 machine cannot be reached, the pieces are done here instead, so transcription never stops because of it."""
 import os
@@ -22,10 +22,10 @@ _lock = threading.Lock()
 # a big machine busy, and several videos transcribing at once would queue behind each other inside it. On a small
 # machine (under 8 cores) this is still a single copy, as before.
 _CPUS = os.cpu_count() or 4
-PROVIDER = os.environ.get("PEAKCUT_ASR_PROVIDER", "cpu").strip().lower() or "cpu"      # "cuda" on a graphics card
-THREADS = int(os.environ.get("PEAKCUT_ASR_THREADS") or (4 if _CPUS >= 8 else max(2, _CPUS - 2)))
-COPIES = int(os.environ.get("PEAKCUT_ASR_COPIES") or (1 if PROVIDER != "cpu" else max(1, _CPUS // THREADS) if _CPUS >= 8 else 1))
-IDLE = int(os.environ.get("PEAKCUT_ASR_IDLE_MINUTES", "15")) * 60      # a language unused this long is put away
+PROVIDER = os.environ.get("REFORMCUT_ASR_PROVIDER", "cpu").strip().lower() or "cpu"      # "cuda" on a graphics card
+THREADS = int(os.environ.get("REFORMCUT_ASR_THREADS") or (4 if _CPUS >= 8 else max(2, _CPUS - 2)))
+COPIES = int(os.environ.get("REFORMCUT_ASR_COPIES") or (1 if PROVIDER != "cpu" else max(1, _CPUS // THREADS) if _CPUS >= 8 else 1))
+IDLE = int(os.environ.get("REFORMCUT_ASR_IDLE_MINUTES", "15")) * 60      # a language unused this long is put away
 
 
 class _Pool:
@@ -64,13 +64,13 @@ def unload(lang: str) -> bool:
     return True
 
 # The machine with the graphics card, if there is one.
-REMOTE = os.environ.get("PEAKCUT_ASR_URL", "").strip().rstrip("/")
-REMOTE_TOKEN = os.environ.get("PEAKCUT_ASR_TOKEN", "").strip()
-REMOTE_BATCH = int(os.environ.get("PEAKCUT_ASR_REMOTE_BATCH", "8"))         # pieces sent together: the card does them at once
-REMOTE_PARALLEL = int(os.environ.get("PEAKCUT_ASR_REMOTE_PARALLEL", "4"))   # pieces of one video worked on at once
+REMOTE = os.environ.get("REFORMCUT_ASR_URL", "").strip().rstrip("/")
+REMOTE_TOKEN = os.environ.get("REFORMCUT_ASR_TOKEN", "").strip()
+REMOTE_BATCH = int(os.environ.get("REFORMCUT_ASR_REMOTE_BATCH", "8"))         # pieces sent together: the card does them at once
+REMOTE_PARALLEL = int(os.environ.get("REFORMCUT_ASR_REMOTE_PARALLEL", "4"))   # pieces of one video worked on at once
 # The card has a ceiling: beyond a few requests at once it gets no faster. So only this many are sent to it at a
 # time (all videos together), and the rest is done on this machine's own processors at the same moment: both are used.
-REMOTE_SLOTS = threading.BoundedSemaphore(max(1, int(os.environ.get("PEAKCUT_ASR_REMOTE_INFLIGHT", "6"))))
+REMOTE_SLOTS = threading.BoundedSemaphore(max(1, int(os.environ.get("REFORMCUT_ASR_REMOTE_INFLIGHT", "6"))))
 _remote_down_until = 0.0
 _remote_lacks: dict = {}       # language -> until when: the card's machine has no model for it, so it is done here
 
@@ -147,7 +147,7 @@ def _load_sherpa():
         if mod:
             return mod
     # A copy of the library in a short folder. Same version check each start, so an update replaces it.
-    base = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "PeakCut" / "lib"
+    base = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "ReformCut" / "lib"
     stamp = base / "sherpa_onnx.from"
     want = f"{pkg}|{(pkg / '__init__.py').stat().st_mtime_ns}"
     try:
@@ -161,7 +161,7 @@ def _load_sherpa():
     except OSError:
         pass
     raise RuntimeError("Reform Cut is in a folder too deep for Windows to load the speech model from. Move the Reform Cut "
-                       "folder somewhere short, like C:\\peakcut, and start it again.") from first
+                       "folder somewhere short, like C:\\reformcut, and start it again.") from first
 
 
 def _new(lang: str = fetch_model.DEFAULT):
@@ -240,7 +240,7 @@ def _chunks(audio: np.ndarray, lo=12.0, hi=24.0):
         pos = cut
 
 
-BATCH = int(os.environ.get("PEAKCUT_ASR_BATCH", "1"))   # pieces decoded together. Measured: no faster on CPU, since
+BATCH = int(os.environ.get("REFORMCUT_ASR_BATCH", "1"))   # pieces decoded together. Measured: no faster on CPU, since
 # each piece already uses every core, so one at a time (which also keeps the words exactly as before).
 
 
