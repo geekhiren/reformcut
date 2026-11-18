@@ -1047,6 +1047,23 @@ def clip_write(jid: str, cid: str):
         raise HTTPException(503, str(e))
 
 
+@app.post("/api/jobs/{jid}/clips/{cid}/preview")
+def clip_preview(jid: str, cid: str, body: dict = Body(...)):
+    """One picture of this clip in a layout, so the layout can be seen before the clip is re-made."""
+    job, clip = _clip_or_404(jid, cid)
+    layout = str((body or {}).get("layout") or "")
+    if layout not in render.LAYOUTS:
+        raise HTTPException(400, "That is not a layout Reform Cut knows.")
+    _throttle("preview:" + ctx.uid(), 60, 600, "That's a lot of previews in a short time. Wait a minute.")
+    try:
+        name = jobs.preview(jid, cid, layout)
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:  # noqa: BLE001 - a preview must never break the page
+        raise HTTPException(500, f"Could not draw this preview: {safe.friendly(e, 200)}")
+    return {"preview": name, "version": clip.get("version", 0)}
+
+
 @app.delete("/api/jobs/{jid}")
 def delete_job(jid: str):
     job = _job_or_404(jid)

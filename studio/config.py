@@ -23,7 +23,7 @@ _load_dotenv()
 
 
 def _old_names():
-    """Reform Cut used to be called PeakCut. A setting still written the old way (PEAKCUT_PORT) keeps working,
+    """Reform Cut used to be called Reform Cut. A setting still written the old way (PEAKCUT_PORT) keeps working,
     as REFORMCUT_PORT; the new name wins when both are there."""
     for k, v in list(os.environ.items()):
         if k.startswith("PEAKCUT_"):

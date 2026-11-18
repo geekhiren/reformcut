@@ -166,7 +166,7 @@ def job_dir(jid) -> Path:
     return Path(_jobs[jid]["dir"])
 
 
-HIDDEN = ("dir", "user", "source_path", "recover")
+HIDDEN = ("dir", "user", "source_path", "recover", "facecam_checked")
 
 
 def public(job) -> dict:
@@ -481,6 +481,7 @@ def render_one(job, clip, words):
         if not clip.get("src") and not job.get("source_path"):
             _piece_again(job, clip)
         off = clip.get("src_offset", 0.0)
+        _facecam_for(job, clip)     # a layout changed after the clip was made needs the webcam now
         src = Path(clip["src"]) if clip.get("src") else Path(job["source_path"])
         if not clip.get("src"):
             clip["end"] = min(clip["end"], job["duration"])
@@ -508,6 +509,50 @@ def render_one(job, clip, words):
         clip.update(status="error", error=safe.friendly(e, 400))
         creators.log(job["creator"], f"Clip failed: {safe.friendly(e, 200)}")
     save(job)
+
+
+def preview(jid, cid, layout):
+    """A picture of how this clip looks in a layout, made before the clip is, so the choice can be seen.
+
+    Returns the name of the picture inside the job's clips folder. Nothing about the clip itself changes."""
+    job = _jobs[jid]
+    clip = next(c for c in job["clips"] if c["id"] == cid)
+    if layout not in render.LAYOUTS:
+        raise ValueError("That is not a layout Reform Cut knows.")
+    if not clip.get("src") and not job.get("source_path"):
+        raise ValueError("The video for this clip is not here any more, so a preview cannot be made.")
+    if not clip.get("src") and job.get("duration") and clip["end"] > job["duration"]:
+        clip = dict(clip, end=job["duration"])      # the same end the re-make would use
+    off = clip.get("src_offset", 0.0)
+    src = Path(clip["src"]) if clip.get("src") else Path(job["source_path"])
+    local = dict(clip, layout=layout, start=clip["start"] - off, end=clip["end"] - off,
+                 hook=roman.to_roman(clip.get("hook") or ""))
+    # No webcam saved on this clip yet: it is looked for now, so the picture is what a re-make would make.
+    _facecam_for(job, local)
+    words = []
+    if clip.get("captions", True):
+        try:
+            words = json.loads((Path(job["dir"]) / "words.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            words = []
+    near = _caption_words(job, clip, words, off) if clip.get("captions", True) else []
+    folder = Path(job["dir"]) / "clips"
+    for old in folder.glob(f"{cid}-prev-*.jpg"):
+        old.unlink(missing_ok=True)         # the last preview is never used again
+    name = render.still(src, folder / f"{cid}-prev-{layout}.jpg", local, near,
+                        job.get("width") or 1920, job.get("height") or 1080).name
+    return name
+
+
+def _facecam_for(job, clip):
+    """The webcam this clip needs: none for a layout that does not use one, and found once per video
+    otherwise. A clip made before its layout was changed gets the answer here, without being remade twice."""
+    if clip.get("layout") not in ("gameplay", "fill") or clip.get("facecam"):
+        return clip.get("facecam")
+    face = _facecam(job)
+    if face:
+        clip["facecam"] = face
+    return face
 
 
 def _caption_words(job, clip, words, off):
@@ -642,6 +687,9 @@ def _facecam(job) -> list | None:
     path = job.get("source_path")
     if not path or not Path(path).is_file():
         return None
+    if job.get("facecam_checked"):          # looked at once per video, found or not
+        return job.get("facecam")
+    job["facecam_checked"] = True
     try:
         box = facecam.detect(path, ask=brain.look_for_facecam)
     except Exception:  # noqa: BLE001 - a missing facecam is not a failure
@@ -1076,9 +1124,9 @@ def _run_job(job):
             c.update(id=f"clip{len(job['clips']) + 1:02d}", start=round(c["start"] + shift, 2),
                      end=round(c["end"] + shift, 2), style=o["style"], layout=o["layout"],
                      captions=o.get("captions", True), status="queued", version=0)
-            # Only the gameplay layout uses a webcam, so it is only looked for then, and only once: a
-            # stream with no webcam is not looked for again on every clip of it.
-            if o["layout"] == "gameplay" and face is False:
+            # Only the layouts with a webcam in them use one, so it is only looked for then, and only once:
+            # a stream with no webcam is not looked for again on every clip of it.
+            if o["layout"] in ("gameplay", "fill") and face is False:
                 face = _facecam(job)
             if face:
                 c["facecam"] = face

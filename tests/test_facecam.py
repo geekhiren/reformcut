@@ -68,6 +68,23 @@ try:
     check("the box is the right size", abs(box[2] - 300) <= 1 and abs(box[3] - 170) <= 1, True)
     check("a job with no video finds no webcam", jobs._facecam({"source_path": os.path.join(work, "nope.mp4")}), None)
 
+    # ---- a clip made before its layout was changed gets the webcam when it is re-made
+    job = {"source_path": cam}
+    blurred = {"layout": "blur"}
+    check("a blurred clip is not made to look for a webcam", jobs._facecam_for(job, blurred), None)
+    check("and no look is remembered", "facecam_checked" in job, False)
+    changed = {"layout": "gameplay"}
+    found = jobs._facecam_for(job, changed)
+    check("a gameplay clip finds the webcam when it is re-made", bool(found), True)
+    check("the clip keeps the webcam for next time", changed.get("facecam"), found)
+    check("the look is made only once per video", job.get("facecam_checked"), True)
+    check("a clip that already has a webcam is left alone",
+          jobs._facecam_for({"source_path": os.path.join(work, "nope.mp4")}, {"layout": "fill", "facecam": [1, 2, 300, 170]}),
+          [1, 2, 300, 170])
+    missed = {"source_path": plain}
+    check("a video with no webcam remembers that too", jobs._facecam(missed), None)
+    check("so it is not looked at again", missed.get("facecam_checked"), True)
+
     # ---- a webcam that is square and runs along one edge, not into a corner
     sq = make("cam_sq.mp4", "color=c=0xC08050:size=360x355:rate=25", where="920:165")
     box = facecam.detect(sq)
@@ -102,19 +119,32 @@ try:
     with patch.object(_ai, "see", return_value=("I am a text model.", 0, 0)):
         check("an answer that is neither is not believed", brain.look_for_facecam(b"jpeg")["looked"], False)
 
-    # ---- the layout: the game fills the screen and the webcam sits in the corner
-    f = render._filter("gameplay", 1920, [0, 0, 300, 170])
-    check("the game fills the screen", "scale=1080:1920" in f and "crop=1080:1920" in f, True)
-    check("the webcam is cropped out of the source", "crop=300:170:0:0" in f, True)
-    check("the webcam is put in the corner", "overlay=" in f, True)
-    check("without a webcam the game simply fills the screen",
-          "scale=1080:1920" in render._filter("gameplay", 1920, None) and "overlay=" not in render._filter("gameplay", 1920, None), True)
-    check("the layout is offered to the user", "gameplay" in render.LAYOUTS, True)
-    # the heading must not run under the webcam picture
+    # ---- the gameplay layout: the game keeps its whole width, the webcam gets a band under it
+    f = render._filter("gameplay", 608, [0, 0, 300, 170])
+    check("the game keeps every pixel across", "scale=1080:608" in f and "crop=1080:1920" not in f, True)
+    check("the game is not cut in two", "force_original_aspect_ratio=increase,crop=1080:608" in f, True)
+    check("the webcam is cut out of the source", "crop=300:170:0:0" in f, True)
+    check("the game and the webcam each get a band", f.count("overlay=") == 2, True)
+    check("the webcam is centred under the game", "overlay=310:" in f, True)
+    check("the layouts are offered to the user", "gameplay" in render.LAYOUTS and "fill" in render.LAYOUTS, True)
+
+    # the fill layout is the old full-screen one: everything large, the sides lost, the webcam in the corner
+    g = render._filter("fill", 1920, [0, 0, 300, 170])
+    check("fill puts the game on the whole screen", "scale=1080:1920" in g and "crop=1080:1920" in g, True)
+    check("fill keeps the webcam in the top corner", "overlay=674:26" in g, True)
+
+    # a webcam is needed for bands: without one, gameplay keeps every pixel rather than losing the sides
+    check("no webcam: gameplay becomes the blurred fill",
+          render.layout_for({"layout": "gameplay"}, 1920, 1080)[0], "blur")
+    check("no webcam: fill becomes the plain crop", render.layout_for({"layout": "fill"}, 1920, 1080)[0], "crop")
+    check("a vertical stream is never put in bands",
+          render.layout_for({"layout": "gameplay", "facecam": [0, 0, 300, 170]}, 1080, 1920)[0], "fill")
+
+    # the heading must not run under the webcam picture in the fill layout
     pip_h = 380 * 376 / 363
-    check("the heading goes below the webcam picture", render._hook_y("gameplay", 300, [0, 0, 363, 376]) > 26 + pip_h, True)
+    check("the heading goes below the webcam picture", render._hook_y("fill", 300, [0, 0, 363, 376]) > 26 + pip_h, True)
     check("another picture moves the heading with it",
-          render._hook_y("gameplay", 300, [0, 0, 300, 170]) < render._hook_y("gameplay", 300, [0, 0, 363, 376]), True)
+          render._hook_y("fill", 300, [0, 0, 300, 170]) < render._hook_y("fill", 300, [0, 0, 363, 376]), True)
     check("without a webcam the heading stays at the top", render._hook_y("crop", 300, None), 300)
 finally:
     shutil.rmtree(work, ignore_errors=True)      # the pictures are big; they must not be left behind

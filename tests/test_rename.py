@@ -1,4 +1,4 @@
-"""Reform Cut used to be PeakCut: old settings and the old database file carry on working."""
+"""Reform Cut used to be Reform Cut: old settings and the old database file carry on working."""
 import os, subprocess, sys, tempfile
 from pathlib import Path
 
