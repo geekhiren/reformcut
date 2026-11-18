@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 
 from . import (brain, clean, config, creators, ctx, facecam, games, load, media, quality, render, roman, safe, stamps,
-               transcribe, usage)
+               transcribe, usage, fetch_model)
 
 
 class Stopped(Exception):
@@ -118,7 +118,7 @@ DEFAULTS = {"max_clips": 6, "min_len": 15, "max_len": 60, "style": "bounce", "la
             # moments: exact clips the person chose, written the YouTube way ("1:05:10 – 1:06:09 Funny moment")
             # replayed: find the moments with YouTube's "Most replayed" graph instead of the transcript alone
             # clean: star out swear words and slurs in captions, hook, title and post text
-            "moments": [], "replayed": False, "clean": False, "language": "en"}
+            "moments": [], "replayed": False, "clean": False, "language": "en", "lang": "en"}   # lang: the language spoken
 
 
 LIMITS = {"max_clips": (1, 20), "min_len": (5, 120), "max_len": (10, 180), "quality": (360, 1080)}
@@ -150,6 +150,8 @@ def clean_options(options) -> dict:
             v = v if v in render.LAYOUTS else DEFAULTS["layout"]
         elif k == "language":                    # "hinglish" is heard by Sarvam AI, "en" by the local model
             v = v if v in ("en", "hinglish") else "en"
+        elif k == "lang":
+            v = v if fetch_model.known(v) else DEFAULTS["lang"]
         else:                                    # range_start, range_end: seconds into the video
             v = float(v)
             if not math.isfinite(v) or v < 0:
@@ -311,7 +313,7 @@ def create(source: dict, options: dict, enqueue=True, creator=None, kind="video"
     c = creators.get(creator) if creator else None
     if c:
         d = creators.root(c["id"]) / ("live" if kind == "live" else "videos") / jid
-        base = {**DEFAULTS, **{k: c[k] for k in ("max_clips", "min_len", "max_len", "style", "layout", "captions")},
+        base = {**DEFAULTS, **{k: c[k] for k in ("max_clips", "min_len", "max_len", "style", "layout", "captions", "lang") if k in c},
                 "language": c.get("language", "en")}
     else:
         d, base, creator = config.user_dir(ctx.uid()) / "jobs" / jid, dict(DEFAULTS), None
@@ -845,11 +847,14 @@ def _run_job(job):
         _set(job, status="running", stage="Picking up where it stopped", error=None)
     else:
         _set(job, status="running", stage="Getting the audio", progress=0.03, error=None, clips=[], ai={}, done_blocks=0)
-    if not transcribe.model_ready() and (config.ASR_BACKEND == "whisper" or not transcribe.REMOTE):
-        from . import fetch_model
+    speech = o.get("lang") if fetch_model.known(o.get("lang")) else fetch_model.DEFAULT   # the language spoken
+    if speech == fetch_model.DEFAULT and not transcribe.model_ready() and (config.ASR_BACKEND == "whisper" or not transcribe.REMOTE):
         _set(job, stage="Getting the speech model (one time)")
         fetch_model.ensure()
         _set(job, stage="Getting the audio")
+    could_borrow = src["type"] == "url" and config.YT_TRANSCRIPT and media.is_youtube(src["url"])
+    if speech != fetch_model.DEFAULT and not transcribe.REMOTE and not could_borrow and fetch_model.status(speech) == "missing":
+        fetch_model.ensure(speech, start=False)      # says what to do, before any time is spent on the download
     fetch = ThreadPoolExecutor(1)
     video = None
     base = 0.0         # where in the video the audio we hold begins: only a part is downloaded when a part is chosen
@@ -945,14 +950,14 @@ def _run_job(job):
         began[clip["id"]] = time.time()
         if src["type"] == "url" and (pieces or not whole_video()):
             _fetch_piece(job, clip, audio, base)
-        if clip["status"] != "error" and clip.get("captions", True) and yt and yt[1].lower().startswith("en"):
+        if clip["status"] != "error" and clip.get("captions", True) and yt_model:
             # The clip was found with YouTube's transcript. What is shown on screen comes from our own model,
             # run on just this clip: full punctuation, nothing blanked out, timings to the word.
             a0 = max(lo, int((clip["start"] - 1.5 - base) * 16000))
             b0 = min(hi, int((clip["end"] + 1.5 - base) * 16000))
             at = a0 / 16000 + base
             try:
-                tw = [dict(w, s=round(w["s"] + at, 2), e=round(w["e"] + at, 2)) for w in transcribe.transcribe(audio[a0:b0])]
+                tw = [dict(w, s=round(w["s"] + at, 2), e=round(w["e"] + at, 2)) for w in transcribe.transcribe(audio[a0:b0], lang=yt_model)]
             except Exception:  # noqa: BLE001 - the clip is still made, with YouTube's words
                 tw = []
             if len(tw) >= 3:
@@ -977,7 +982,16 @@ def _run_job(job):
         if yt and not _covers(yt[0], lo / 16000 + base, hi / 16000 + base):
             yt = None
         job["transcript_from"] = "youtube" if yt else "own"
-        job["lang"] = yt[1] if yt else ""          # the language spoken, when YouTube says (decides the captions)
+    # The language spoken decides the captions: YouTube's word for it when its transcript is used, else the choice made.
+    job["lang"] = yt[1] if yt else speech
+    # A clip found with YouTube's transcript gets its on-screen words from our own model, when there is one here
+    # for the language YouTube says was spoken (English always; others once they are downloaded).
+    yt_code = (yt[1].lower().split("-")[0] if yt else "")
+    yt_model = yt_code if fetch_model.known(yt_code) and (yt_code == fetch_model.DEFAULT or fetch_model.ready(yt_code)) else ""
+    if not yt and speech != fetch_model.DEFAULT and not transcribe.REMOTE and not fetch_model.ready(speech):
+        if fetch_model.state[speech]["doing"]:
+            _set(job, stage=f"Waiting for the {fetch_model.label(speech)} speech model to finish downloading")
+        fetch_model.ensure(speech, start=False)      # waits for a download already running, else says what to do
     if resuming:
         try:
             words = json.loads((d / "words.json").read_text(encoding="utf-8"))
@@ -1008,7 +1022,7 @@ def _run_job(job):
                 if now_on[0] == i and p - last[0] > 0.05:      # only the part being shown moves the bar
                     last[0] = p
                     _set(job, progress=max(job["progress"], 0.14 + 0.78 * ((a_ - lo) + p * (b_ - a_)) / max(1, hi - lo)))
-            heard[i] = ahead.submit(ctx.bind(transcribe.transcribe), audio[a_:b_], tp, lang)
+            heard[i] = ahead.submit(ctx.bind(transcribe.transcribe), audio[a_:b_], tp, "hinglish" if lang == "hinglish" else speech)
 
     # The ad breaks and static screens of the whole video, found once. It reads the video end to end,
     # so it is done here rather than for each clip, and only when asked for.

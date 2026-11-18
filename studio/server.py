@@ -614,7 +614,13 @@ def status(request: Request):
     return {"user": auth.public(me_), "update": updates.latest() if me_.is_admin else None, "accounts": config.ACCOUNTS, "disk_full": load.disk_full(), "no_ffmpeg": bool(_tools.missing()), "links": {"repo": config.REPO_URL, "follow": config.FOLLOW_URL}, "ai": usage.brief(), "unread": notices.unread(),
             "tour": not accounts.settings()["tour_done"],
             "youtube": accounts.youtube_ready(), "connect": {p: accounts.can_connect(p) for p in accounts.PLATFORM_NAMES}, "max_upload_mb": config.MAX_UPLOAD_MB, "upload_part_mb": config.UPLOAD_PART_MB, "max_batch": config.MAX_ACTIVE_JOBS_PER_USER,
-            "styles": {k: v["label"] for k, v in render.STYLES.items()}, "layouts": render.LAYOUTS}
+            "styles": {k: v["label"] for k, v in render.STYLES.items()}, "layouts": render.LAYOUTS, "speech": _speech_brief()}
+
+
+def _speech_brief() -> dict:
+    """Which spoken languages can be transcribed here: for the language choice when adding a video."""
+    from . import fetch_model
+    return {k: {"label": m[0], "size_mb": m[3], "state": fetch_model.status(k)} for k, m in fetch_model.MODELS.items()}
 
 
 # ================================================================ videos
@@ -1397,6 +1403,47 @@ def ai_test(request: Request):
         raise HTTPException(400, str(e))
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, ai.explain(e) or "The AI did not answer: " + _ai_error(e))
+
+
+# ---------------------------------------------------------------- speech models, one per spoken language
+# Only the owner (or an admin, when accounts are on) can download or delete them: they are shared by everyone here.
+def _speech_lang(lang: str) -> str:
+    from . import fetch_model
+    if not fetch_model.known(lang):
+        raise HTTPException(400, "PeakCut has no speech model for that language.")
+    return lang
+
+
+@app.get("/api/speech")
+def speech_list(request: Request):
+    _admin(request)
+    from . import fetch_model
+    return {"models": [{"lang": k, "label": m[0], "size_mb": m[3], "credit": m[4], "state": fetch_model.status(k),
+                        "percent": fetch_model.state[k]["percent"], "error": fetch_model.state[k]["error"],
+                        "default": k == fetch_model.DEFAULT} for k, m in fetch_model.MODELS.items()]}
+
+
+@app.post("/api/speech/{lang}")
+def speech_download(request: Request, lang: str):
+    _admin(request)
+    from . import fetch_model
+    fetch_model.start(_speech_lang(lang))
+    ctx.bump()
+    return speech_list(request)
+
+
+@app.delete("/api/speech/{lang}")
+def speech_remove(request: Request, lang: str):
+    _admin(request)
+    from . import fetch_model
+    try:
+        fetch_model.remove(_speech_lang(lang))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    ctx.bump()
+    return speech_list(request)
 
 
 # ================================================================ posting, accounts, settings

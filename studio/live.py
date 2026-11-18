@@ -411,7 +411,7 @@ class Session:
         if not hurry or n > SR * 24:
             # cut at the quietest moment between 4 and 6.5 s, so no word is split; the rest waits for the next pass
             _, cut = next(transcribe._chunks(audio, 4.0, 6.5))
-        words = transcribe.transcribe(audio[:cut], lang=self.settings.get("language", "en"))
+        words = transcribe.transcribe(audio[:cut], lang="hinglish" if self.settings.get("language") == "hinglish" else (self.job.get("lang") or "en"))
         off = base / SR
         for w in words:
             w["s"], w["e"] = round(w["s"] + off, 2), round(w["e"] + off, 2)
@@ -560,9 +560,9 @@ class Session:
         phrases = [p.strip().lower() for p in self.settings.get("trigger_words", "").split(",") if p.strip()]
         if not phrases or not new_words:
             return
-        key = [re.sub(r"[^a-z0-9']", "", w["w"].lower()) for w in new_words]
+        key = [_plain(w["w"]) for w in new_words]
         for p in phrases:
-            parts = [re.sub(r"[^a-z0-9']", "", x) for x in p.split()]
+            parts = [_plain(x) for x in p.split()]
             for i in range(len(key) - len(parts) + 1):
                 if key[i:i + len(parts)] == parts:
                     t = new_words[i]["s"]
@@ -646,11 +646,11 @@ class Session:
         """Where `src` really starts on the transcript clock. The video pieces and the audio feed keep separate
         clocks that drift apart, so transcribe the clip's own audio and line its words up with the live words.
         Local speech model only: no AI calls."""
-        key = lambda w: re.sub(r"[^a-z0-9]", "", w.lower())
+        key = lambda w: _plain(w).replace("'", "")
         try:
             wav = src.with_suffix(".wav")
             media.extract_audio(src, wav)
-            heard = transcribe.transcribe(media.load_audio(wav), lang=self.settings.get("language", "en"))
+            heard = transcribe.transcribe(media.load_audio(wav), lang="hinglish" if self.settings.get("language") == "hinglish" else (self.job.get("lang") or "en"))
             wav.unlink(missing_ok=True)
             with self.lock:
                 near = [w for w in self.words if guess - 15 <= w["s"] <= guess + dur + 15]
@@ -795,6 +795,11 @@ def recover(job):
     jobs.submit_live(cleanup)
 
 
+def _plain(word: str) -> str:
+    """A word reduced to its letters and digits, in any alphabet (no Arabic vowel marks), for matching words up."""
+    return re.sub(r"[^\w']|_", "", transcribe.ARABIC_MARKS.sub("", word.lower()))
+
+
 def start_session(creator: dict, url=None) -> dict:
     url = normalize(url or creator.get("channel") or "")
     if not re.match(r"^https?://[^/]+\.[^/]+/", url + "/"):
@@ -811,16 +816,20 @@ def start_session(creator: dict, url=None) -> dict:
         raise ValueError(f"You're already recording {len(active_mine())} streams, the most this server allows at once. Stop one first.")
     if len(active()) >= config.MAX_LIVE_TOTAL or (active() and load.busy()):
         raise ValueError("PeakCut is recording as many streams as it can right now. Try again in a little while.")
-    from . import tools
+    from . import fetch_model, tools
     if tools.missing():
         raise ValueError(tools.HELP)
     if config.ASR_BACKEND == "whisper":
         from . import whisper
         if not whisper.installed():
             raise ValueError(whisper.HELP)
+    lang = creator.get("lang") if fetch_model.known(creator.get("lang")) else fetch_model.DEFAULT
+    if lang != fetch_model.DEFAULT and not transcribe.REMOTE and not fetch_model.ready(lang):
+        raise ValueError(f"This creator speaks {fetch_model.label(lang)}, and its speech model isn't on this computer "
+                         "yet. Add it in Settings → Speech models (an admin can do this), then start recording again.")
     job = jobs.create({"type": "live", "url": url, "name": f"{creator['name']} live"}, {}, enqueue=False,
                       creator=creator["id"], kind="live")
-    job.update(status="live", stage="Connecting to the stream")
+    job.update(status="live", stage="Connecting to the stream", lang=lang)
     jobs.save(job)
     Session(job, creator).start()
     return job

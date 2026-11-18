@@ -33,8 +33,8 @@ class MixedSpeechTests(unittest.TestCase):
         with patch("faster_whisper.utils.download_model", side_effect=OSError("offline")):
             with self.assertRaisesRegex(RuntimeError, "multilingual speech model"):
                 fetch_model.ensure()
-        self.assertFalse(fetch_model.state["doing"])
-        self.assertTrue(fetch_model.state["error"])
+        self.assertFalse(fetch_model.state["en"]["doing"])
+        self.assertTrue(fetch_model.state["en"]["error"])
 
     def test_parakeet_backend_still_uses_existing_path(self):
         with patch.object(transcribe.config, "ASR_BACKEND", "parakeet"), patch("studio.whisper.transcribe", side_effect=AssertionError("Whisper used for Parakeet")):
@@ -66,9 +66,9 @@ class MixedSpeechTests(unittest.TestCase):
             fetch_model.ensure()
             self.assertFalse(download.call_args_list[2].kwargs.get("local_files_only", False))
             self.assertTrue(download.call_args.kwargs["local_files_only"])
-            self.assertFalse(fetch_model.state["doing"])
-            self.assertEqual(fetch_model.state["percent"], 100)
-            self.assertEqual(fetch_model.state["error"], "")
+            self.assertFalse(fetch_model.state["en"]["doing"])
+            self.assertEqual(fetch_model.state["en"]["percent"], 100)
+            self.assertEqual(fetch_model.state["en"]["error"], "")
 
     def test_partial_model_is_not_ready(self):
         from studio import fetch_model
@@ -84,9 +84,9 @@ class MixedSpeechTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "multilingual speech model"):
                 fetch_model.ensure()
             self.assertFalse(fetch_model.ready())
-        self.assertFalse(fetch_model.state["doing"])
-        self.assertLess(fetch_model.state["percent"], 100)
-        self.assertTrue(fetch_model.state["error"])
+        self.assertFalse(fetch_model.state["en"]["doing"])
+        self.assertLess(fetch_model.state["en"]["percent"], 100)
+        self.assertTrue(fetch_model.state["en"]["error"])
 
     def test_downloaded_medium_text_vocabulary_is_ready(self):
         from studio import fetch_model
@@ -169,7 +169,7 @@ class MixedSpeechTests(unittest.TestCase):
         with patch.dict(sys.modules, {"faster_whisper": None, "faster_whisper.utils": None}):
             with self.assertRaisesRegex(RuntimeError, "requirements-whisper.txt"):
                 fetch_model.ensure()
-            self.assertIn("requirements-whisper.txt", fetch_model.state["error"])
+            self.assertIn("requirements-whisper.txt", fetch_model.state["en"]["error"])
 
     def test_whisper_missing_package_safe_friendly_explains_error(self):
         from studio import safe

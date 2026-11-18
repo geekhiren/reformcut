@@ -490,6 +490,9 @@ img.av{object-fit:cover}
 .appact{flex:none}
 .appcard{flex-wrap:wrap}
 .stor-path{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.speech-list{display:flex;flex-direction:column;gap:10px}
+.speech-row{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r)}
+.speech-info{flex:1 1 240px;min-width:0;display:flex;flex-direction:column;gap:2px}.speech-info .bar{max-width:320px}
 .stor-path code{flex:1 1 260px;min-width:0;overflow-wrap:anywhere;font-size:13px;background:var(--muted);border-radius:8px;padding:10px 12px}
 .stor-bar{height:10px;border-radius:999px;background:var(--muted);overflow:hidden;margin:14px 0 6px}
 .stor-bar i{display:block;height:100%;background:var(--brand);border-radius:999px}
@@ -1393,6 +1396,7 @@ function drawAdd(variant) {
       <button class="btn primary" id="goBtn">${ic("scissors")}Make clips</button>
     </div>
     <div class="composer-opts" inert><div class="og">
+      ${langSeg(c?.lang || "en")}
       <div class="ob wide"><div class="ot">Clips</div><div class="nsteps">
         ${stepper("o_max", "How many", c?.max_clips ?? 6, 1, 20, 1, "")}
         ${stepper("o_min", "Shortest", c?.min_len ?? 15, 5, 120, 5, "s")}
@@ -1405,7 +1409,7 @@ function drawAdd(variant) {
       <div class="ob"><div class="ot">Video quality</div><input type="hidden" id="o_quality" value="720"><div class="seg" role="group" aria-label="Video quality">
         <button type="button" data-seg="o_quality" data-v="720" aria-pressed="true">720p<small>Fast</small></button>
         <button type="button" data-seg="o_quality" data-v="1080" aria-pressed="false">1080p<small>Sharper, about 2x slower</small></button></div></div>
-      <div class="ob"><div class="ot">Language spoken</div><input type="hidden" id="o_language" value="${c?.language === "hinglish" ? "hinglish" : "en"}"><div class="seg" role="group" aria-label="Language spoken">
+      <div class="ob"><div class="ot">Hindi / Hinglish speech</div><input type="hidden" id="o_language" value="${c?.language === "hinglish" ? "hinglish" : "en"}"><div class="seg" role="group" aria-label="Hindi / Hinglish speech">
         <button type="button" data-seg="o_language" data-v="en" aria-pressed="${c?.language !== "hinglish"}">English<small>Free, on this computer</small></button>
         <button type="button" data-seg="o_language" data-v="hinglish" aria-pressed="${c?.language === "hinglish"}">Hindi / Hinglish<small>Sarvam AI, about ₹29 an hour</small></button></div></div>
       <div class="ob"><div class="ot">Part of the video</div><div class="range">
@@ -1423,6 +1427,21 @@ function drawAdd(variant) {
   drawAtt();
 }
 const LAYOUT_SHORT = {blur:"Blurred fill", zoom:"Zoomed in", crop:"Fill screen", gameplay:"Gameplay + facecam"};
+/* The language spoken in the video picks which speech model writes the transcript. Languages other than English
+   need their model downloaded once (Settings → Speech models). */
+const LANG_NATIVE = {ar:"العربية"};
+const speechLangs = () => S.status.speech || {en:{label:"English", state:"ready", size_mb:0}};
+const langName = k => { const m = speechLangs()[k]; return m ? m.label + (LANG_NATIVE[k] ? " · " + LANG_NATIVE[k] : "") : k; };
+function langSeg(val) {
+  const L = speechLangs(); if (!L[val]) val = "en";
+  return `<div class="ob"><div class="ot">Spoken language</div><input type="hidden" id="o_lang" value="${esc(val)}"><div class="seg" role="group" aria-label="Spoken language">${Object.entries(L).map(([k, m]) =>
+    `<button type="button" data-seg="o_lang" data-v="${esc(k)}" aria-pressed="${k === val}">${esc(langName(k))}<small>${k === "en" ? "Default" : m.state === "ready" ? "Ready" : m.state === "downloading" ? "Downloading" : `Adds ${esc(m.size_mb)} MB once`}</small></button>`).join("")}</div></div>`;
+}
+function setLang(v) {   // when the creator is changed in the add bar, their language comes with them
+  const i = $("#o_lang"); if (!i || !speechLangs()[v]) return;
+  i.value = v; i.parentElement.querySelectorAll("[data-seg]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.v === v)));
+}
+document.addEventListener("change", e => { if (e.target.id === "o_creator") setLang(S.creators.find(x => x.id === e.target.value)?.lang || "en"); });
 const CAP_LOOK = {bounce:{font:"'Archivo Black'", hl:"#FFFF00", up:true}, hype:{font:"Anton", hl:"#FF3C3C", up:true}, clean:{font:"Poppins", hl:"#6BD7FF", up:false, w:800}};
 function capPrev(k) {
   const s = CAP_LOOK[k] || {font:"inherit", hl:"#FF8B33", up:true};
@@ -1478,7 +1497,7 @@ document.addEventListener("keydown", e => {
 const targetCreator = () => creatorId() || $("#o_creator")?.value || "";
 function jobOptions() {
   const n = id => { const v = $(id).value; return v === "" ? null : Number(v); };
-  const o = {max_clips:n("#o_max"), min_len:n("#o_min"), max_len:n("#o_maxlen"), captions:$("#o_captions").checked, style:$("#o_style").value, layout:$("#o_layout").value, quality:n("#o_quality"), language:$("#o_language").value};
+  const o = {max_clips:n("#o_max"), min_len:n("#o_min"), max_len:n("#o_maxlen"), captions:$("#o_captions").checked, style:$("#o_style").value, layout:$("#o_layout").value, quality:n("#o_quality"), language:$("#o_language").value, lang:$("#o_lang")?.value || "en"};
   // a plain number is minutes, as before; anything else ("1:05:10", "1h5m") is read by the server
   const t = id => { const v = $(id).value.trim(); return v === "" ? null : /^\d+(\.\d+)?$/.test(v) ? Number(v) * 60 : v; };
   if (t("#o_from") !== null) o.range_start = t("#o_from");
@@ -1668,6 +1687,17 @@ function sendFile(f, who, options) {
     x.send(fd);
   });
 }
+function langNote(A, lang) {
+  const sp = speechLangs()[lang], admin = S.status.user?.is_admin;
+  const onlyYT = !A.files.length && A.links.length && A.links.every(l => /youtu\.?be/i.test(l.url));
+  $("#langnote")?.remove();
+  $("#addform .composer-bar").insertAdjacentHTML("afterend", `<div class="note" id="langnote" style="margin:12px 0 0">${ic("down")}<span>
+    <b>${esc(sp.label)} needs its speech model first.</b> ${admin ? `It's about ${esc(sp.size_mb)} MB and is downloaded once. Your videos start as soon as it's here.` : `Ask your admin to add ${esc(sp.label)} in Settings → Speech models.`}
+    ${onlyYT ? `<br><span class="sub">YouTube videos with their own ${esc(sp.label)} captions also work without it.</span>` : ""}
+    <span class="row" style="margin-top:10px">${admin ? `<button type="button" class="btn sm primary" data-act="langdl" data-v="${esc(lang)}">Download and make clips</button>` : ""}
+    ${onlyYT ? `<button type="button" class="btn sm" data-act="langgo" data-v="${esc(lang)}">Make clips with YouTube's captions</button>` : ""}
+    <button type="button" class="btn sm ghost" data-act="langno">Cancel</button></span></span></div>`);
+}
 async function makeClips() {
   const A = att();
   if (A.busy) return;
@@ -1683,6 +1713,9 @@ async function makeClips() {
     $("#url")?.focus();
     return;
   }
+  const lang = $("#o_lang")?.value || "en", sp = speechLangs()[lang];
+  if (sp && sp.state === "missing" && A.langOk !== lang) return langNote(A, lang);
+  $("#langnote")?.remove();
   A.busy = true; drawAtt();
   let started = 0, failed = 0;
   const who = targetCreator(), opts = jobOptions();
@@ -1886,7 +1919,8 @@ function drawCreatorForm() {
   box.innerHTML = `<div class="card"><h2>Their stream</h2><p class="help">Where to record from, and whether to start by itself.</p>
       <div class="chans">${channelRows(c)}</div>
       <div class="fields" style="margin-top:14px"><label class="sw span"><input type="checkbox" data-k="auto_watch" ${c.auto_watch ? "checked" : ""}><span>Record automatically when they go live<small>Checks straight away, then every two minutes.</small></span></label>
-        <label class="f">Language they speak<select data-k="language">${opts({en:"English (free, on this computer)", hinglish:"Hindi / Hinglish (Sarvam AI, about ₹29 an hour)"}, c.language || "en")}</select></label></div></div>
+        <label class="f">Hindi / Hinglish speech<select data-k="language">${opts({en:"English (free, on this computer)", hinglish:"Hindi / Hinglish (Sarvam AI, about ₹29 an hour)"}, c.language || "en")}</select></label>
+        <label class="f">Language they speak<select data-k="lang">${opts(Object.fromEntries(Object.keys(speechLangs()).map(k => [k, langName(k)])), c.lang || "en")}</select><small class="sub" style="font-weight:400">Used for live recordings and as the choice for their videos.${(c.lang && c.lang !== "en" && speechLangs()[c.lang]?.state !== "ready") ? " Its speech model isn't added yet: see Settings → Speech models." : ""}</small></label></div></div>
     <div class="card"><h2>How the AI decides</h2><p class="help">Two separate AI checks. The words judge reads only what was said. The reaction judge sees only how loud the streamer got and how busy chat was, never the words.</p>
       <div class="fields">
         <label class="f">Check the live stream every<select data-k="ai_every_min">${opts({1:"1 minute", 2:"2 minutes", 3:"3 minutes", 5:"5 minutes", 10:"10 minutes"}, c.ai_every_min || 3)}</select><small class="sub" id="costhint" style="font-weight:400">${costHint(c.ai_every_min)}</small></label>
@@ -2047,7 +2081,8 @@ const setTabs = () => [
   ...(S.status.accounts === false ? [] : [["profile", "Profile", "user", "Your name, email and how you sign in"],
                                           ["security", "Security", "lock", "Password and signing out"]]),
   ["apps", "Connected apps", "plug", "Where your clips get posted"],
-  ...(S.status.user?.is_admin ? [["storage", "Storage", "folder", "Where videos and clips are kept"]] : [])];
+  ...(S.status.user?.is_admin ? [["speech", "Speech models", "chat", "The languages PeakCut can hear"],
+                                 ["storage", "Storage", "folder", "Where videos and clips are kept"]] : [])];
 let currentModels = [];
 function renderModelList(filter = "") {
   const list = $("#model_drop_list"), count = $("#model_drop_count"), inp = $("#ai_model");
@@ -2124,6 +2159,18 @@ async function drawSettings() {
           </div>
           <div class="row" style="margin-top:20px"><button class="btn primary" data-act="aisave">Save and test</button>${k.ready ? `<button class="btn" data-act="aitest">Test again</button>` : ""}</div></section>`;
       aiHints();
+    }
+    if (tab === "speech") {
+      const r = await api("/api/speech");
+      body.innerHTML = `<section class="set-sec"><h2>Speech models</h2><p class="help">PeakCut writes down what is said in a video with a speech model that runs on this computer, one per language. English is always here. Add another language to clip videos spoken in it, then choose that language when adding a video, or on a creator's Setup.</p>
+        <div class="speech-list">${r.models.map(m => `<div class="speech-row"><div class="speech-info"><b>${esc(langName(m.lang))}</b><span class="sub">${esc(m.size_mb)} MB · ${esc(m.credit)}</span>
+            ${m.state === "downloading" ? `<div class="bar"><i style="width:${m.percent}%"></i></div>` : ""}${m.error && m.state === "missing" ? `<span class="sub" style="color:var(--bad)">The last download failed. Check the internet connection and try again.</span>` : ""}</div>
+          <div class="row">${m.state === "ready" ? `<span class="pill ok">${ic("check")}Ready</span>${m.default ? "" : `<button class="btn sm ghost" data-act="speechdel" data-v="${esc(m.lang)}">${ic("trash")}Remove</button>`}`
+            : m.state === "downloading" ? `<span class="pill">Downloading ${esc(m.percent)}%</span>`
+            : `<button class="btn sm" data-act="speechget" data-v="${esc(m.lang)}">${ic("down")}Download</button>`}</div></div>`).join("")}</div></section>`;
+      clearTimeout(S.speechTimer);
+      if (r.models.some(m => m.state === "downloading")) S.speechTimer = setTimeout(() => { if (S.stab === "speech" && $("#sform")) drawSettings(); }, 1500);
+      else if (S.speechTimer) { S.speechTimer = null; S.status = await api("/api/status"); }
     }
     if (tab === "profile") {
       const joined = me.created_at ? new Date(me.created_at * 1000).toLocaleDateString([], {day: "numeric", month: "long", year: "numeric"}) : "";
@@ -2409,6 +2456,21 @@ document.addEventListener("click", async e => {
       } finally { b.disabled = false; }
       return;
     }
+    if (a === "speechget" || a === "speechdel") {
+      if (a === "speechdel" && !await ask(`Remove the ${langName(d.v)} speech model?`, "Videos in that language can't be clipped until it's downloaded again. Clips already made stay.", "Remove", true)) return;
+      b.disabled = true;
+      try { await send("/api/speech/" + encodeURIComponent(d.v), {}, a === "speechget" ? "POST" : "DELETE"); }
+      finally { S.status = await api("/api/status"); await drawSettings(); }
+      return;
+    }
+    if (a === "langdl" || a === "langgo") {
+      const A = att();
+      if (a === "langdl") { b.disabled = true; await send("/api/speech/" + encodeURIComponent(d.v), {}); S.status = await api("/api/status"); }
+      A.langOk = d.v; $("#langnote")?.remove();
+      try { await makeClips(); } finally { A.langOk = null; }
+      return;
+    }
+    if (a === "langno") return $("#langnote")?.remove();
     if (a === "menu") return $("#app").classList.toggle("open");
     if (a === "collapse") { const m = $("#app").classList.toggle("mini"); try { localStorage.setItem("mini", m ? "1" : ""); } catch {} return; }
     if (a === "toggleopts") { const p = $(".composer-opts"), open = !p.classList.contains("open"); p.classList.toggle("open", open); p.inert = !open; b.classList.toggle("on", open); b.setAttribute("aria-expanded", String(open)); return; }
