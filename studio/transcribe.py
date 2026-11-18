@@ -14,7 +14,7 @@ import time
 
 import numpy as np
 
-from . import fetch_model
+from . import config, fetch_model
 
 _lock = threading.Lock()
 

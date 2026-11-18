@@ -355,7 +355,7 @@ def _first(out):
 def _one_prompt(intro, text, title, uploader):
     return (f"{intro}\nVideo title: {_safe(title) or 'unknown'}\nChannel: {_safe(uploader) or 'unknown'}\n\n"
             "Return exactly one item describing it. Set start and end to 0."
-            + RULES.format(min_len=0, max_len=0, transcript=_safe(text, 8000)))
+            + _rules(0, 0, _safe(text, 8000)))
 
 
 def describe(text, title="", uploader="", game=None, timeout=None, note=""):
