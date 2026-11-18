@@ -20,7 +20,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from . import admin as admins
-from . import account, load
+from . import account, cloud, load
 from . import (accounts, ai, alerts, auth, config, creators, ctx, db, jobs, live, media, posting,
                profiles, render, safe, transcribe, usage)
 
@@ -1028,6 +1028,9 @@ def media_file(jid: str, name: str, download: int = 0):
         raise HTTPException(404)
     f = Path(_job_or_404(jid)["dir"]) / "clips" / name
     if not f.is_file():
+        link = cloud.url(f, name if download else "")
+        if link:
+            return RedirectResponse(link, status_code=302, headers={"Cache-Control": "private, no-store"})
         raise HTTPException(404)
     return FileResponse(f, filename=name if download else None, headers={"Cache-Control": "private, max-age=300"})
 
@@ -1379,6 +1382,12 @@ def public_clip(token: str):
     with ctx.as_user(uid):
         job = jobs.get(job_id) if re.fullmatch(r"[\w\-]{8,60}", job_id) else None
         f = Path(job["dir"]) / "clips" / name if job else None
+    if f and not f.is_file():
+        from starlette.background import BackgroundTask
+        if not cloud.fetch(f):
+            raise HTTPException(404)
+        return FileResponse(f, media_type="video/mp4", headers={"Cache-Control": "private, no-store"},
+                            background=BackgroundTask(lambda: cloud.drop_local(f)))
     if not f or not f.is_file():
         raise HTTPException(404)
     return FileResponse(f, media_type="video/mp4", headers={"Cache-Control": "private, no-store"})
