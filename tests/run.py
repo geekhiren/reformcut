@@ -51,6 +51,7 @@ def main() -> int:
                 ("deleting and bulk actions", ["tests/test_delete.py"]),
                 ("big uploads in pieces", ["tests/test_upload_parts.py", BASE]),
                 ("AI services", ["tests/test_ai.py"]),
+                ("Codex subscription", ["tests/test_codex.py"]),
                 ("no sign-in, and the AI key from the dashboard", ["tests/test_local.py"]),
                 ("Hindi and Urdu captions in Roman letters", ["tests/test_roman.py"]),
                 ("turning captions off and back on", ["tests/test_captions.py"]),
@@ -71,6 +72,7 @@ def main() -> int:
             r = subprocess.run([sys.executable, *args], cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
             lines = (r.stdout + r.stderr).splitlines()
             passed = sum(1 for x in lines if x.startswith("PASS"))
+            passed += sum(1 for x in lines if x.rstrip().endswith(" ... ok"))
             for x in lines:
                 if not x.startswith("PASS") and x.strip():
                     print("  " + x)

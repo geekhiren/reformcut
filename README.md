@@ -18,7 +18,7 @@ creator's live stream and clip the highlights while the stream is still running.
   spacing and daily caps (see [DEPLOY.md](DEPLOY.md#connecting-youtube-instagram-and-tiktok) for the one-time setup).
 - **No sign-in on your own computer.** It opens straight into the dashboard. On a shared server, switch accounts on
   (`PEAKCUT_ACCOUNTS=1`) for email or Google sign-in and an admin dashboard.
-- **Your own AI.** Gemini, OpenAI, Grok, Groq, OpenRouter, Claude, a local model through Ollama, or anything that
+- **Your own AI.** Gemini, OpenAI, a Codex subscription, Grok, Groq, OpenRouter, Claude, a local model through Ollama, or anything that
   speaks the OpenAI chat format. No key at all also works: clips are then picked by loudness.
 
 ## Quick start
@@ -84,6 +84,7 @@ PEAKCUT_AI_KEY=your-key-here
 |---|---|---|
 | `gemini` | Google Gemini | https://aistudio.google.com/apikey |
 | `openai` | OpenAI | https://platform.openai.com/api-keys |
+| `codex` | Codex (your ChatGPT subscription) | Sign in through Codex CLI; see below |
 | `xai` | Grok (xAI) | https://console.x.ai |
 | `groq` | Groq | https://console.groq.com/keys |
 | `openrouter` | OpenRouter (many models, one key) | https://openrouter.ai/keys |
@@ -97,6 +98,38 @@ PEAKCUT_AI_KEY=your-key-here
 - You pay the AI service directly for what you use. The **AI usage** page in the app shows how many requests and
   tokens each video took.
 - Speech to text does not use the AI service. It runs on your own machine, so audio never leaves it.
+
+### Use your Codex subscription
+
+Install [Codex CLI](https://developers.openai.com/codex/cli) or the Codex desktop app on the computer that runs
+PeakCut. Use a recent CLI supporting `--ignore-user-config` and `--ignore-rules`. In a terminal, sign in with your
+ChatGPT account:
+
+```powershell
+codex login
+codex login status
+```
+
+Open **Settings, AI**, choose **Codex (ChatGPT subscription)**, keep the model as **default**, then press **Save and
+test**. **Find models** reads the CLI's local model cache; you can also type an available model yourself. The default
+choice lets Codex select a model. No API key is needed. Calls use your subscription's Codex allowance and limits.
+PeakCut refuses an API-key login for this provider and never falls back to API billing.
+
+The adapter is Python and invokes the official CLI, which handles login and credential renewal. It runs each
+request separately in a temporary, read-only working directory, with shell execution, web search, apps, plugins,
+image generation and additional agents disabled. Text, JSON clip suggestions,
+captions and image analysis use the same subscription. Calls run one at a time; live clipping may need a faster model
+to meet its short deadlines. On a different machine or in a container, Codex must be installed and signed in there.
+
+To configure it through `.env` instead of the dashboard:
+
+```ini
+PEAKCUT_AI_PROVIDER=codex
+PEAKCUT_AI_MODELS=default
+```
+
+If Codex cannot be found, set `PEAKCUT_CODEX_COMMAND` to the executable's full path. On Windows the adapter also
+looks for the CLI bundled with the Codex desktop app and finds the native binary inside standard npm installations.
 
 ## Settings
 

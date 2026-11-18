@@ -2008,11 +2008,21 @@ const setTabs = () => [
 function aiHints() {
   const k = S.ai, sel = $("#ai_provider"); if (!k || !sel) return;
   const pv = k.providers.find(x => x.id === sel.value) || k.providers[0], same = pv.id === k.provider;
+  const subscription = pv.id === "codex";
+  $("#ai_keywrap").hidden = subscription;
+  $("#ai_codexhelp").hidden = !subscription;
+  $("#ai_codexhelp").textContent = same && k.codex?.subscription
+    ? "Your ChatGPT account is connected through Codex. Requests use your subscription limits."
+    : same && k.codex?.error ? k.codex.error : "Uses the Codex login on this computer. Sign in with your ChatGPT account by running codex login, then Save and test. Requests use your subscription limits.";
+  $("#ai_modelhint").textContent = subscription
+    ? "Use default to let Codex choose, or Find models for choices from Codex's local cache. A second model after a comma is a fallback."
+    : "A fast, inexpensive model is the right choice. Add a second one after a comma to fall back on.";
+  if (subscription && !$("#ai_model").value.trim()) $("#ai_model").value = "default";
   $("#ai_key").placeholder = same && k.has_key ? `Saved${k.key_hint ? ", ends in " + k.key_hint : ""}. Paste a new key to replace it` : pv.needs_key ? "Paste your key" : "Not needed";
   $("#ai_keyhint").innerHTML = pv.key_url ? `${pv.needs_key ? "Get a key at" : "Set it up at"} <a href="${esc(pv.key_url)}" target="_blank" rel="noopener">${esc(pv.key_url.replace("https://", ""))}</a>. The key stays on this server and is never shown again.` : "The key stays on this server and is never shown again.";
   $("#ai_model").placeholder = pv.example ? "For example " + pv.example : "The model id, exactly as the service names it";
   $("#ai_base").placeholder = pv.address || "http://127.0.0.1:1234/v1";
-  $("#ai_basewrap").hidden = pv.id !== "custom" && !(same && k.base_url);
+  $("#ai_basewrap").hidden = subscription || (pv.id !== "custom" && !(same && k.base_url));
 }
 async function drawSettings() {
   const box = $("#sform"); if (!box) return;
@@ -2024,14 +2034,15 @@ async function drawSettings() {
   try {
     if (tab === "ai") {
       const k = S.ai = await api("/api/ai");
-      body.innerHTML = `<section class="set-sec"><h2>AI</h2><p class="help">PeakCut uses an AI model to pick the moments worth clipping and to write hooks, titles and captions. Use your own key from any of these services. You pay that service directly. Without a key, clips are picked by loudness.</p>
-          <div class="ai-state">${k.ready ? `<span class="pill ok">${ic("check")}Ready</span><span class="sub">${esc(k.label)} · ${esc(k.models[0] || "")}</span>` : `<span class="pill warn">Not set up</span><span class="sub">Choose a service, paste your key and pick a model.</span>`}</div>
+      body.innerHTML = `<section class="set-sec"><h2>AI</h2><p class="help">PeakCut uses an AI model to pick the moments worth clipping and to write hooks, titles and captions. Choose a service with your own key, your Codex subscription, or a local model. Without AI, clips are picked by loudness.</p>
+          <div class="ai-state">${k.ready ? `<span class="pill ok">${ic("check")}Ready</span><span class="sub">${esc(k.label)} · ${esc(k.models[0] || "")}</span>` : `<span class="pill warn">Not set up</span><span class="sub">Choose a service and a model, then Save and test.</span>`}</div>
           <div class="ai-form">
             <label class="f">AI service<select id="ai_provider">${k.providers.map(x => `<option value="${esc(x.id)}" ${x.id === k.provider ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</select></label>
-            <label class="f">Key<input id="ai_key" type="password" autocomplete="off" spellcheck="false"><span class="hint" id="ai_keyhint"></span></label>
+            <p class="help" id="ai_codexhelp" hidden></p>
+            <label class="f" id="ai_keywrap">Key<input id="ai_key" type="password" autocomplete="off" spellcheck="false"><span class="hint" id="ai_keyhint"></span></label>
             <label class="f" id="ai_basewrap">Address<input id="ai_base" value="${esc(k.base_url || "")}" spellcheck="false"><span class="hint">Where the service answers. Only needed for a custom service.</span></label>
             <label class="f">Model<span class="with"><input id="ai_model" list="ai_models" value="${esc(k.models.join(", "))}" spellcheck="false"><button class="btn" type="button" data-act="aimodels">Find models</button></span>
-              <datalist id="ai_models"></datalist><span class="hint">A fast, inexpensive model is the right choice. Add a second one after a comma to fall back on.</span></label>
+              <datalist id="ai_models"></datalist><span class="hint" id="ai_modelhint">A fast, inexpensive model is the right choice. Add a second one after a comma to fall back on.</span></label>
           </div>
           <div class="row" style="margin-top:20px"><button class="btn primary" data-act="aisave">Save and test</button>${k.ready ? `<button class="btn" data-act="aitest">Test again</button>` : ""}</div></section>`;
       aiHints();
