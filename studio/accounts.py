@@ -10,6 +10,9 @@ import hmac
 import json
 import re
 import secrets
+import shutil
+import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -398,6 +401,56 @@ def instagram_add(token: str) -> dict:
     return _instagram_save(token.strip())
 
 
+def instagram_session_add(sessionid: str) -> dict:
+    """Connect an Instagram session supplied by the local owner."""
+    sessionid = str(sessionid or "").strip()
+    if not sessionid or len(sessionid) > 1024 or any(c.isspace() for c in sessionid):
+        raise ValueError("Paste the Instagram sessionid cookie value.")
+    try:
+        from instagrapi import Client
+        client = Client()
+        client.login_by_sessionid(sessionid)
+        user = client.account_info()
+        acc = {"id": f"ig_session_{user.pk}", "platform": "instagram", "name": "@" + user.username,
+               "added": time.time(), "user_id": str(user.pk), "session_settings": client.get_settings(),
+               "detail": "Cookie session"}
+        _put(acc)
+        return acc
+    except ImportError:
+        raise ValueError("Install PeakCut's requirements, then try again.") from None
+    except Exception:
+        raise ValueError("Instagram did not accept this session. Check the cookie or sign in again in Instagram.") from None
+
+
+def _instagram_session_upload(acc, path, caption):
+    try:
+        from instagrapi import Client
+        client = Client(settings=acc["session_settings"])
+        with tempfile.TemporaryDirectory(prefix="peakcut-ig-") as directory:
+            thumbnail = Path(directory) / "cover.jpg"
+            cover = path.with_suffix(".jpg")
+            if cover.is_file():
+                shutil.copyfile(cover, thumbnail)
+            else:
+                subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(path), "-frames:v", "1", str(thumbnail)],
+                               check=True, capture_output=True, timeout=60)
+            text = caption[:2200]
+            started = time.time()
+            try:
+                result = client.clip_upload(path, caption=text, thumbnail=thumbnail)
+            except Exception:
+                # Instagram can publish the Reel but fail while returning its details.
+                # Only accept an exact caption on a recent post from this attempt.
+                result = next((m for m in client.user_medias(acc["user_id"], amount=12)
+                               if (m.caption_text or "").strip() == text.strip()
+                               and m.taken_at and m.taken_at.timestamp() >= started - 10), None)
+                if result is None:
+                    raise
+        return str(result.pk), f"https://www.instagram.com/reel/{result.code}/" if result.code else ""
+    except Exception:
+        raise RuntimeError("Instagram could not confirm the Reel was posted. Check Instagram before trying again, then check your session and video.") from None
+
+
 def _ig_token(acc) -> str:
     if time.time() - acc.get("token_time", 0) > 7 * 86400:  # tokens last 60 days; refresh weekly
         try:
@@ -413,6 +466,8 @@ def _ig_token(acc) -> str:
 def instagram_upload(acc, path: Path, caption: str, job_id: str = ""):
     """A Reel. On a public site Instagram fetches the clip from a one-hour signed link; on a computer it cannot
     reach, the file is sent instead (only possible for some app types)."""
+    if acc.get("session_settings"):
+        return _instagram_session_upload(acc, path, caption)
     token = _ig_token(acc)
     auth = {"Authorization": f"Bearer {token}"}
     uid = acc["user_id"]
@@ -450,6 +505,8 @@ def instagram_upload(acc, path: Path, caption: str, job_id: str = ""):
 
 
 def instagram_views(acc, media_id: str):
+    if acc.get("session_settings"):
+        return None
     r = httpx.get(f"{IG}/{media_id}/insights", params={"metric": "views"},
                   headers={"Authorization": f"Bearer {_ig_token(acc)}"}, timeout=30)
     if r.status_code != 200:

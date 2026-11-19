@@ -1326,6 +1326,18 @@ def list_accounts():
     return accounts.list_accounts()
 
 
+@app.post("/api/accounts/instagram/session")
+def instagram_session(request: Request, body: dict = Body(...)):
+    if config.ACCOUNTS or config.HOST not in ("127.0.0.1", "::1", "localhost") or not request.client or request.client.host not in ("127.0.0.1", "::1"):
+        raise HTTPException(403, "Cookie sign-in is only available on a local PeakCut installation.")
+    _throttle("instagram-session:" + ctx.uid(), 10, 600)
+    try:
+        accounts.instagram_session_add(body.get("sessionid", ""))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return accounts.list_accounts()
+
+
 @app.delete("/api/accounts/{aid}")
 def remove_account(aid: str):
     accounts.remove(aid)
