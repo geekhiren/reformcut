@@ -79,7 +79,7 @@ def delete_many(job_ids: list, clip_ids: list) -> dict:
 def zip_clips(clip_ids: list, limit_gb: float = 4.0) -> Path:
     """One .zip of finished clips, for downloading many at once. Clips are already compressed, so they are only
     stored, not squeezed again: making the file is as fast as copying."""
-    files, total, seen, fetched = [], 0, set(), []     # fetched: pulled down from online storage just for this zip
+    files, texts, total, seen, fetched = [], [], 0, set(), []     # fetched: pulled down from online storage just for this zip
     for jid, cid in dict.fromkeys(clip_ids):
         job = jobs.get(jid)
         clip = next((c for c in (job or {}).get("clips", []) if c["id"] == cid and c.get("status") == "done"), None)
@@ -93,12 +93,15 @@ def zip_clips(clip_ids: list, limit_gb: float = 4.0) -> Path:
         total += f.stat().st_size
         if total > limit_gb * 1e9:
             raise ValueError(f"That is more than {limit_gb:g} GB of clips. Download them in smaller groups.")
-        base = "".join(ch if ch.isalnum() or ch in " -_" else "" for ch in (clip.get("title") or clip.get("hook") or cid))[:60].strip() or cid
+        # numbered the way the app shows them (Clip 1, Clip 2...), so a file and its text below are easy to match
+        title = "".join(ch if ch.isalnum() or ch in " -_" else "" for ch in (clip.get("title") or clip.get("hook") or cid))[:60].strip() or cid
+        base = f"Clip {job['clips'].index(clip) + 1:02d} - {title}"
         name, n = f"{base}.mp4", 2
         while name.lower() in seen:
             name, n = f"{base} ({n}).mp4", n + 1
         seen.add(name.lower())
         files.append((f, name))
+        texts.append(post_text(name, job, clip))
     if not files:
         raise ValueError("None of those clips are ready to download.")
     tmp = config.user_dir(ctx.uid()) / "tmp"
@@ -110,9 +113,27 @@ def zip_clips(clip_ids: list, limit_gb: float = 4.0) -> Path:
     with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED, allowZip64=True) as z:
         for f, name in files:
             z.write(f, name)
+        # everything needed to post the clips by hand, one block per clip, in the same order as the files
+        z.writestr("post-text.txt", "\n\n".join(texts).replace("\n", "\r\n").encode("utf-8-sig"))
     for f in fetched:
         f.unlink(missing_ok=True)
     return out
+
+
+def post_text(name: str, job: dict, clip: dict) -> str:
+    """One clip's post text, ready to copy into YouTube, Instagram or TikTok by hand."""
+    line = "=" * 70
+    parts = [line, name, line,
+             "TITLE:\n" + (clip.get("title") or clip.get("hook") or ""),
+             "YOUTUBE DESCRIPTION:\n" + (clip.get("description") or ""),
+             "INSTAGRAM / TIKTOK CAPTION:\n" + (clip.get("caption") or "(none: use the title and YouTube description)"),
+             "HASHTAGS:\n" + " ".join("#" + h for h in clip.get("hashtags") or []),
+             "YOUTUBE TAGS:\n" + ", ".join(clip.get("tags") or [])]
+    from . import posting      # here, not at the top: posting imports jobs, which this module also imports
+    credit = posting.credit_line(creators.get(job.get("creator")) or dict(creators.DEFAULTS), job.get("uploader", ""))
+    if credit:
+        parts.append("CREDIT (add to every post):\n" + credit)
+    return "\n".join(parts[:3]) + "\n" + "\n\n".join(parts[3:])
 
 
 # ---------------------------------------------------------------- creators

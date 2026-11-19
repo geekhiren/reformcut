@@ -1775,6 +1775,7 @@ function clipHtml(j, c) {
     <button class="shot" data-act="openclip" ${a} aria-label="Open clip: ${esc(c.title || c.hook)}">${body}
       <span class="badge l ${scoreCls(c.score)}" title="AI score">${c.score || "Hand"}</span><span class="badge r">${fmt(c.end - c.start)}</span></button>
     <div class="clip-body">
+      <small class="sub">Clip ${j.clips.indexOf(c) + 1}</small>
       <div class="hook">${esc(c.hook || "Untitled clip")}</div>
       <div class="ttl">${esc(c.title)}</div>
       ${postPills(c) ? `<div class="row" style="gap:4px">${postPills(c)}</div>` : ""}
