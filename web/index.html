@@ -1352,7 +1352,7 @@ function pathFor(v, tab) {
 function fromPath(path) {
   const m = path.match(/^\/app\/creators\/([^/]+)(?:\/(setup|activity|clips))?\/?$/);
   if (m) return ["c:" + decodeURIComponent(m[1]), m[2] || "clips"];
-  const st = path.match(/^\/app\/settings(?:\/(ai|profile|security|apps|storage))?\/?$/);
+  const st = path.match(/^\/app\/settings(?:\/(ai|subscription|profile|security|apps|storage))?\/?$/);
   if (st) return ["settings", st[1] || null];
   const k = Object.keys(ROUTES).find(x => ROUTES[x] && path.replace(/\/$/, "") === "/app/" + ROUTES[x]);
   return [k || "overview", "clips"];
@@ -1363,6 +1363,8 @@ function remember(v, tab, how = "push") {
 }
 addEventListener("popstate", () => { const [v, tab] = fromPath(location.pathname); go(v, tab, true); });
 function go(v, tab, fromHistory) {
+  stopSubscriptionPoll();
+  if (v !== "settings" || tab !== "subscription") S.subscriptionDraft = null;
   if (v.startsWith("c:") && !S.creators.some(c => "c:" + c.id === v)) v = "overview";
   S.view = v; if (tab) S.ctab = tab; else if (!v.startsWith("c:")) S.ctab = "clips";
   if (v === "settings") S.stab = setTabs().some(x => x[0] === tab) ? tab : setTabs()[0][0];
@@ -2091,7 +2093,8 @@ function drawUsage() {
 /* ============================================================ settings */
 // With sign-in off there is no profile or password to manage. The AI section is for whoever runs the server.
 const setTabs = () => [
-  ...(S.status.user?.is_admin ? [["ai", "AI", "bolt", "Your AI service, model and key"]] : []),
+  ...(S.status.user?.is_admin ? [["ai", "AI", "bolt", "Your AI service, model and key"],
+                               ["subscription", "AI subscription", "user", "Connect your ChatGPT account"]] : []),
   ...(S.status.accounts === false ? [] : [["profile", "Profile", "user", "Your name, email and how you sign in"],
                                           ["security", "Security", "lock", "Password and signing out"]]),
   ["apps", "Connected apps", "plug", "Where your clips get posted"],
@@ -2135,27 +2138,119 @@ function closeModelDrop() {
 function aiHints() {
   const k = S.ai, sel = $("#ai_provider"); if (!k || !sel) return;
   const pv = k.providers.find(x => x.id === sel.value) || k.providers[0], same = pv.id === k.provider;
+  const subscription = pv.id === "codex";
+  $("#ai_keywrap").hidden = subscription;
+  $("#ai_model").disabled = subscription;
+  $('[data-act="aimodels"]').disabled = subscription;
+  $('[data-act="aisave"]').disabled = subscription;
+  $("#ai_codexhelp").hidden = !subscription;
+  $("#ai_codexhelp").textContent = same && k.codex?.subscription
+    ? "Your ChatGPT account is connected through Codex. Requests use your subscription limits."
+    : same && k.codex?.error ? k.codex.error : "Connect your ChatGPT account in the AI subscription tab. Requests use your Codex subscription limits.";
+  $("#ai_modelhint").textContent = subscription
+    ? "Use default to let Codex choose, or Find models for choices from Codex's local cache. A second model after a comma is a fallback."
+    : "A fast, inexpensive model is the right choice. Add a second one after a comma to fall back on.";
+  if (subscription && !$("#ai_model").value.trim()) $("#ai_model").value = "default";
   $("#ai_key").placeholder = same && k.has_key ? `Saved${k.key_hint ? ", ends in " + k.key_hint : ""}. Paste a new key to replace it` : pv.needs_key ? "Paste your key" : "Not needed";
   $("#ai_keyhint").innerHTML = pv.key_url ? `${pv.needs_key ? "Get a key at" : "Set it up at"} <a href="${esc(pv.key_url)}" target="_blank" rel="noopener">${esc(pv.key_url.replace("https://", ""))}</a>. The key stays on this server and is never shown again.` : "The key stays on this server and is never shown again.";
   $("#ai_model").placeholder = pv.example ? "For example " + pv.example : "The model id, exactly as the service names it";
   $("#ai_base").placeholder = pv.address || "http://127.0.0.1:1234/v1";
-  $("#ai_basewrap").hidden = pv.id !== "custom" && !(same && k.base_url);
+  $("#ai_basewrap").hidden = subscription || (pv.id !== "custom" && !(same && k.base_url));
+}
+let subscriptionTimer = null, subscriptionVersion = 0, subscriptionUsing = false;
+function stopSubscriptionPoll() {
+  clearTimeout(subscriptionTimer); subscriptionTimer = null; subscriptionVersion++;
+}
+const effortLabels = {none:"Sem raciocínio", minimal:"Mínimo", low:"Baixo", medium:"Médio", high:"Alto", xhigh:"Extra alto", max:"Máximo", ultra:"Ultra"};
+function selectedSubscriptionModel() {
+  const models = S.subscriptionCatalog || [], value = $("#sub_model")?.value;
+  return value === "default" ? models.find(m => m.is_default) || models[0] : models.find(m => m.id === value);
+}
+function subscriptionChoiceChanged() {
+  const k = S.subscription, button = $('[data-act="subuse"]');
+  if (!k || !button) return;
+  button.disabled = subscriptionUsing || !selectedSubscriptionModel();
+  const changed = (k.models || []).length > 1 || $("#sub_model")?.value !== (k.models || ["default"])[0] || $("#sub_effort")?.value !== (k.reasoning_effort || "");
+  S.subscriptionDraft = changed ? {email:k.account?.email, model:$("#sub_model")?.value, effort:$("#sub_effort")?.value || ""} : null;
+  button.textContent = !k.active ? "Usar esta assinatura" : changed ? "Salvar e testar" : "Testar assinatura";
+}
+function fillSubscriptionEfforts(preferred = "") {
+  const model = selectedSubscriptionModel(), select = $("#sub_effort"); if (!select) return;
+  const choices = model?.efforts || [], label = effortLabels[model?.default_effort];
+  select.innerHTML = `<option value="">Padrão do modelo${label ? " — " + esc(label) : ""}</option>` + choices.map(e => `<option value="${esc(e)}">${esc(effortLabels[e] || e)}</option>`).join("");
+  select.disabled = subscriptionUsing || !model;
+  select.value = choices.includes(preferred) ? preferred : "";
+  subscriptionChoiceChanged();
+}
+async function loadSubscriptionCatalog(k, version, refresh, draft = null) {
+  try {
+    const result = await api("/api/ai/subscription/models" + (refresh ? "?refresh=1" : ""));
+    if (version !== subscriptionVersion || S.view !== "settings" || S.stab !== "subscription") return;
+    S.subscriptionCatalog = result.models;
+    const select = $("#sub_model"), current = draft?.model ?? (k.models || ["default"])[0]; if (!select) return;
+    const recommended = result.models.find(m => m.is_default) || result.models[0];
+    select.innerHTML = `<option value="default">Automático${recommended ? " — " + esc(recommended.label) : ""}</option>` +
+      result.models.map(m => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join("");
+    if (current !== "default" && !result.models.some(m => m.id === current)) {
+      select.innerHTML = `<option value="${esc(current)}" disabled>${esc(current)} — indisponível</option>` + select.innerHTML;
+    }
+    select.value = current; select.disabled = subscriptionUsing;
+    fillSubscriptionEfforts(draft?.effort ?? k.reasoning_effort ?? "");
+  } catch (err) {
+    if (version !== subscriptionVersion) return;
+    S.subscriptionCatalog = [];
+    const select = $("#sub_model"), result = $("#sub_result");
+    if (select) { select.innerHTML = '<option value="">Não foi possível carregar os modelos</option>'; select.disabled = true; }
+    if (result) result.textContent = `${err.message} Press Check connection to retry.`;
+  }
+}
+async function drawSubscription(body, refresh = false, provided = null) {
+  stopSubscriptionPoll();
+  const version = subscriptionVersion;
+  const k = provided || await api("/api/ai/subscription" + (refresh ? "?refresh=1" : ""));
+  if (version !== subscriptionVersion || S.view !== "settings" || S.stab !== "subscription" || !body?.isConnected) return;
+  const connected = k.state === "connected", pending = k.state === "pending", account = k.account || {};
+  const draft = connected && account.email === S.subscriptionDraft?.email ? S.subscriptionDraft : null;
+  if (!draft) S.subscriptionDraft = null;
+  S.subscription = k;
+  body.innerHTML = `<section class="set-sec"><h2>AI subscription</h2>
+    <p class="help">Connect your ChatGPT account to use its Codex allowance for clip selection, titles and captions. Sign-in happens on the official ChatGPT page.</p>
+    <div class="ai-state" role="status"><span class="pill ${connected ? "ok" : "warn"}">${connected ? "Account connected" : pending ? "Waiting for sign-in" : k.installed ? "Not connected" : "Codex not found"}</span><span class="sub">ChatGPT / Codex</span></div>
+    ${k.error ? `<p class="help" role="alert">${esc(k.error)}</p>` : ""}
+    ${connected ? `<dl class="kv"><div><dt>Account</dt><dd>${esc(account.email || "ChatGPT account")}</dd></div><div><dt>Plan</dt><dd>${esc(account.plan || "ChatGPT")}</dd></div><div><dt>Used by PeakCut</dt><dd>${k.active ? "Yes" : "Not yet"}</dd></div></dl>
+      <div class="ai-form"><label class="f">Modelo Codex<select id="sub_model" disabled><option value="">Carregando modelos disponíveis…</option></select><span class="hint">Modelos disponíveis na sua conta. Automático deixa o Codex escolher.${(k.models || []).length > 1 ? " Salvar esta seleção substituirá a lista atual e usará somente este modelo." : ""}</span></label>
+      <label class="f">Nível de esforço<select id="sub_effort" disabled><option value="">Selecione um modelo</option></select><span class="hint">Mostra somente os níveis aceitos pelo modelo escolhido. Mudanças são salvas após um teste bem-sucedido.</span></label></div>
+      <div class="row" style="margin-top:20px"><button class="btn primary" data-act="subuse" disabled>${k.active ? "Testar assinatura" : "Usar esta assinatura"}</button><button class="btn" data-act="subrefresh">Check connection</button><button class="btn ghost" data-act="subconnect">Connect another account</button></div>`
+      : pending ? `<p class="help">Finish signing in on the ChatGPT page. PeakCut checks the connection automatically.</p><div class="row"><a class="btn primary" href="${esc(k.auth_url || "")}" target="_blank" rel="noopener noreferrer">Continue sign-in</a><button class="btn" data-act="subrefresh">Check connection</button><button class="btn" data-act="subcancel">Cancel connection</button></div>`
+      : `<div class="row"><button class="btn primary" data-act="subconnect" ${k.installed ? "" : "disabled"}>Connect ChatGPT</button><button class="btn" data-act="subrefresh">Check connection</button></div>`}
+    <p class="help" style="margin-top:20px">This is the account used by Codex on this computer. PeakCut never asks for your ChatGPT password or an API key.</p>
+    <p class="help" id="sub_result" role="status"></p></section>`;
+  if (connected) await loadSubscriptionCatalog(k, version, refresh, draft);
+  if (pending) subscriptionTimer = setTimeout(() => {
+    if (S.view === "settings" && S.stab === "subscription") drawSubscription(body).catch(err => {
+      const result = $("#sub_result"); if (result) result.textContent = `${err.message} Press Check connection to retry.`;
+    });
+  }, 2000);
 }
 async function drawSettings() {
+  stopSubscriptionPoll();
   const box = $("#sform"); if (!box) return;
   const tab = S.stab || setTabs()[0][0], me = S.status.user;
+  if (tab !== "subscription") S.subscriptionDraft = null;
   box.innerHTML = `<div class="set-layout"><nav class="set-nav" aria-label="Settings sections">${setTabs().map(([k, l, i, h]) =>
       `<a href="${pathFor("settings", k)}" class="set-link ${k === tab ? "on" : ""}" data-act="settab" data-k="${k}">${ic(i)}<span><b>${l}</b><small>${h}</small></span></a>`).join("")}</nav>
     <div class="set-body" id="setbody"><div class="set-load">Loading…</div></div></div>`;
   const body = $("#setbody");
   try {
+    if (tab === "subscription") await drawSubscription(body);
     if (tab === "ai") {
       const k = S.ai = await api("/api/ai");
-      body.innerHTML = `<section class="set-sec"><h2>AI</h2><p class="help">Reform Cut uses an AI model to pick the moments worth clipping and to write hooks, titles and captions. Use your own key from any of these services. You pay that service directly. Without a key, clips are picked by loudness.</p>
-          <div class="ai-state">${k.ready ? `<span class="pill ok">${ic("check")}Ready</span><span class="sub">${esc(k.label)} · ${esc(k.models[0] || "")}</span>` : `<span class="pill warn">Not set up</span><span class="sub">Choose a service, paste your key and pick a model.</span>`}</div>
+      body.innerHTML = `<section class="set-sec"><h2>AI</h2><p class="help">Reform Cut uses an AI model to pick the moments worth clipping and to write hooks, titles and captions. Choose a service with your own key, your Codex subscription, or a local model. Without AI, clips are picked by loudness.</p><p class="help">For ChatGPT account sign-in, open <a href="/app/settings/subscription" data-act="settab" data-k="subscription">AI subscription</a>.</p>
+          <div class="ai-state">${k.ready ? `<span class="pill ok">${ic("check")}Ready</span><span class="sub">${esc(k.label)} · ${esc(k.models[0] || "")}</span>` : `<span class="pill warn">Not set up</span><span class="sub">Choose a service and a model, then Save and test.</span>`}</div>
           <div class="ai-form">
             <label class="f">AI service<select id="ai_provider">${k.providers.map(x => `<option value="${esc(x.id)}" ${x.id === k.provider ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</select></label>
-            <label class="f">Key<input id="ai_key" type="password" autocomplete="off" spellcheck="false"><span class="hint" id="ai_keyhint"></span></label>
+            <p class="help" id="ai_codexhelp" hidden></p>
+            <label class="f" id="ai_keywrap">Key<input id="ai_key" type="password" autocomplete="off" spellcheck="false"><span class="hint" id="ai_keyhint"></span></label>
             <label class="f" id="ai_basewrap">Address<input id="ai_base" value="${esc(k.base_url || "")}" spellcheck="false"><span class="hint">Where the service answers. Only needed for a custom service.</span></label>
             <label class="f">Model
               <div class="model-picker" id="model_picker">
@@ -2168,7 +2263,7 @@ async function drawSettings() {
                   <div class="model-drop-list" id="model_drop_list"></div>
                 </div>
               </div>
-              <span class="hint">A fast, inexpensive model is the right choice. Add a second one after a comma to fall back on.</span>
+              <span class="hint" id="ai_modelhint">A fast, inexpensive model is the right choice. Add a second one after a comma to fall back on.</span>
             </label>
           </div>
           <div class="row" style="margin-top:20px"><button class="btn primary" data-act="aisave">Save and test</button>${k.ready ? `<button class="btn" data-act="aitest">Test again</button>` : ""}</div></section>`;
@@ -2434,6 +2529,8 @@ document.addEventListener("change", async e => {
     if (t.id === "o_captions") t.dataset.overridden = "true";
     syncCaptionStyle(t);
   }
+  if (t.id === "sub_model") return fillSubscriptionEfforts($("#sub_effort")?.value || "");
+  if (t.id === "sub_effort") return subscriptionChoiceChanged();
   if (t.id === "ai_provider") { currentModels = []; closeModelDrop(); if (S.ai && t.value !== S.ai.provider) { $("#ai_model").value = ""; $("#ai_base").value = ""; } return aiHints(); }
   if (t.dataset.sel) {
     const k = t.dataset.sel;
@@ -2485,6 +2582,57 @@ document.addEventListener("click", async e => {
   if (b.tagName === "A") e.preventDefault();
   try {
     if (a === "go") { closePops(); return go(d.v, d.tab); }
+    if (a === "subrefresh") {
+      b.disabled = true;
+      try { await drawSubscription($("#setbody"), true); } finally { b.disabled = false; }
+      return;
+    }
+    if (a === "subconnect") {
+      b.disabled = true;
+      const popup = window.open("about:blank", "_blank");
+      if (popup) popup.opener = null;
+      try {
+        const k = await send("/api/ai/subscription/connect");
+        if (popup && k.auth_url) popup.location.href = k.auth_url; else if (popup) popup.close();
+        await drawSubscription($("#setbody"), false, k);
+      } catch (err) { if (popup) popup.close(); throw err; }
+      finally { b.disabled = false; }
+      return;
+    }
+    if (a === "subcancel") {
+      b.disabled = true;
+      try { const k = await send("/api/ai/subscription/cancel"); await drawSubscription($("#setbody"), false, k); }
+      finally { b.disabled = false; }
+      return;
+    }
+    if (a === "subuse") {
+      if (subscriptionUsing) return;
+      subscriptionUsing = true;
+      b.disabled = true;
+      $("#sub_model").disabled = true; $("#sub_effort").disabled = true;
+      const model = $("#sub_model").value.trim() || "default";
+      const effort = $("#sub_effort").value;
+      const models = [model];
+      let message = "";
+      try {
+        const result = await send("/api/ai/subscription/use", {models, reasoning_effort:effort});
+        message = `Subscription is ready. ${result.model} answered successfully.`;
+      } catch (err) { message = `The subscription test failed. ${err.message}`; }
+      finally {
+        try {
+          S.status = await api("/api/status"); drawShell();
+          await drawSubscription($("#setbody"), true);
+        } finally {
+          subscriptionUsing = false;
+          if ($("#sub_model") && selectedSubscriptionModel()) {
+            $("#sub_model").disabled = false; $("#sub_effort").disabled = false;
+          }
+          subscriptionChoiceChanged();
+        }
+        if ($("#sub_result")) $("#sub_result").textContent = message;
+      }
+      return;
+    }
     if (a === "aimodels") {
       b.disabled = true;
       try {

@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from . import admin as admins
 from . import account, cloud, load
 from . import (accounts, ai, alerts, auth, brain, config, creators, ctx, db, jobs, live, media, posting,
-               profiles, render, safe, transcribe, usage)
+               profiles, render, safe, subscription, transcribe, usage)
 
 from . import tools as _tools  # noqa: E402
 
@@ -83,6 +83,11 @@ def _startup():
 
 
 # ================================================================ the gate: who is asking, and are they allowed
+@app.on_event("shutdown")
+def _close_subscription():
+    subscription.connection.close()
+
+
 class Gate:
     """Runs before every request: finds the signed-in user, blocks what needs sign-in, blocks cross-site form
     posts, caps upload size and adds security headers."""
@@ -1397,10 +1402,14 @@ def ai_get(request: Request):
 @app.put("/api/ai")
 def ai_put(request: Request, body: dict = Body(...)):
     _admin(request)
+    if str(body.get("provider") or "").strip().lower() == "codex":
+        subscription_use(request, body)
+        return ai.public()
     k = body.get("key")
     try:
         out = ai.save(body.get("provider"), body.get("models"), body.get("base_url") or "",
-                      None if k is None or (isinstance(k, str) and not k.strip() and not body.get("remove_key")) else str(k))
+                      None if k is None or (isinstance(k, str) and not k.strip() and not body.get("remove_key")) else str(k),
+                      reasoning_effort=body.get("reasoning_effort"))
     except (ValueError, TypeError) as e:
         raise HTTPException(400, str(e))
     usage.forget_all()
@@ -1473,6 +1482,77 @@ def speech_remove(request: Request, lang: str):
         raise HTTPException(409, str(e))
     ctx.bump()
     return speech_list(request)
+
+
+def _subscription_public(state):
+    return {**state, "active": ai.provider() == "codex", "models": ai.models() if ai.provider() == "codex" else ["default"],
+            "reasoning_effort": ai.current()["reasoning_effort"]}
+
+
+@app.get("/api/ai/subscription")
+def subscription_status(request: Request, refresh: bool = False):
+    _admin(request)
+    return _subscription_public(subscription.connection.status(refresh=refresh))
+
+
+@app.get("/api/ai/subscription/models")
+def subscription_models(request: Request, refresh: bool = False):
+    _admin(request)
+    _throttle("submodels:" + ctx.uid(), 30, 600)
+    try:
+        return {"models": subscription.connection.catalog(refresh=refresh)}
+    except ai.codex.CodexError as e:
+        raise HTTPException(502, str(e))
+
+
+@app.post("/api/ai/subscription/connect")
+def subscription_connect(request: Request):
+    _admin(request)
+    _throttle("subscription:" + ctx.uid(), 8, 600)
+    try:
+        state = subscription.connection.start()
+    except ai.codex.CodexError as e:
+        raise HTTPException(502, str(e))
+    ctx.bump()
+    return _subscription_public(state)
+
+
+@app.post("/api/ai/subscription/cancel")
+def subscription_cancel(request: Request):
+    _admin(request)
+    try:
+        state = subscription.connection.cancel()
+    except ai.codex.CodexError as e:
+        raise HTTPException(502, str(e))
+    ctx.bump()
+    return _subscription_public(state)
+
+
+@app.post("/api/ai/subscription/use")
+def subscription_use(request: Request, body: dict = Body(default={})):
+    _admin(request)
+    _throttle("subtest:" + ctx.uid(), 20, 600)
+    try:
+        models = ai.validate_models(body.get("models") or "default")
+        effort = ai.codex.validate_effort(body.get("reasoning_effort", ai.current()["reasoning_effort"]))
+        catalog = subscription.connection.catalog(refresh=True)
+        default = next((m for m in catalog if m["is_default"]), catalog[0])
+        for model in models:
+            choice = default if model == "default" else next((m for m in catalog if m["id"] == model), None)
+            if choice is None:
+                raise ValueError("Choose an available model from the list.")
+            if effort and effort not in choice["efforts"]:
+                raise ValueError("This model does not support the selected reasoning effort. Choose another level.")
+        result = ai.test_codex(models, reasoning_effort=effort)
+        if ai.provider() != "codex" or ai.models() != models or ai.current()["reasoning_effort"] != effort:
+            ai.save("codex", models, reasoning_effort=effort)
+            usage.forget_all()
+            ctx.bump()
+        return result
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, ai.explain(e) or "The subscription did not answer. Check the connection and model.")
 
 
 # ================================================================ posting, accounts, settings

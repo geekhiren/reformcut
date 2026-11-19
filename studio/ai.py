@@ -1,7 +1,7 @@
-"""Talking to the AI service. You bring your own key, and choose the service and model in the dashboard
+"""Talking to the AI service. Use your own key or Codex subscription, and choose the service and model in the dashboard
 (Settings, AI) or in .env. What is saved from the dashboard is kept in ai.json in the data folder and wins.
 
-    REFORMCUT_AI_PROVIDER   gemini | openai | xai | groq | openrouter | anthropic | ollama | custom
+    REFORMCUT_AI_PROVIDER   gemini | openai | codex | xai | groq | openrouter | anthropic | ollama | custom
     REFORMCUT_AI_MODELS     one or more model ids, comma separated, tried in this order
     REFORMCUT_AI_KEY        your key (or REFORMCUT_AI_KEY_FILE, a file holding it)
     REFORMCUT_AI_BASE_URL   only for "custom" (any service that speaks the OpenAI chat format), or to override
@@ -19,7 +19,7 @@ import threading
 
 import httpx
 
-from . import config
+from . import config, codex
 
 # name -> (label shown on the pages, address, how it is spoken to, where to get a key, an example model id)
 PROVIDERS = {
@@ -31,9 +31,10 @@ PROVIDERS = {
     "anthropic": ("Claude", "https://api.anthropic.com/v1", "anthropic", "https://console.anthropic.com", ""),
     "ollama": ("Ollama (on this machine)", "http://127.0.0.1:11434/v1", "openai", "https://ollama.com", "llama3.1"),
     "custom": ("Custom (OpenAI-compatible)", "", "openai", "", ""),
+    "codex": ("Codex (ChatGPT subscription)", "", "codex", "", "default"),
 }
 ALIASES = {"google": "gemini", "grok": "xai", "claude": "anthropic", "local": "ollama"}
-NO_KEY = {"ollama", "custom"}       # a model running on your own machine needs no key
+NO_KEY = {"ollama", "custom", "codex"}
 
 # ---------------------------------------------------------------- the settings in use
 _lock = threading.Lock()
@@ -64,10 +65,12 @@ def current() -> dict:
     """Provider, models, address and key: what the dashboard saved, or else what .env says."""
     d = _from_dashboard()
     p = str(d.get("provider") or config.AI_PROVIDER or "").strip().lower()
-    return {"provider": ALIASES.get(p, p),
+    p = ALIASES.get(p, p)
+    return {"provider": p,
+            "reasoning_effort": str(d.get("reasoning_effort", config.env("REFORMCUT_CODEX_REASONING_EFFORT", ""))).strip().lower() if p == "codex" else "",
             "models": list(d["models"]) if d.get("provider") else list(config.AI_MODELS),
-            "base_url": (str(d.get("base_url") or "") if d.get("provider") else config.AI_BASE_URL).rstrip("/"),
-            "key": str(d["key"]) if d.get("provider") and "key" in d else config.ai_key()}
+            "base_url": "" if p == "codex" else (str(d.get("base_url") or "") if d.get("provider") else config.AI_BASE_URL).rstrip("/"),
+            "key": "" if p == "codex" else str(d["key"]) if d.get("provider") and "key" in d else config.ai_key()}
 
 
 def provider() -> str:
@@ -93,6 +96,8 @@ def base_url() -> str:
 
 def ready() -> bool:
     c = current()
+    if c["provider"] == "codex":
+        return bool(c["models"] and codex.status()["subscription"])
     return bool(c["provider"] in PROVIDERS and c["models"] and base_url() and (c["key"] or c["provider"] in NO_KEY))
 
 
@@ -101,18 +106,16 @@ def public() -> dict:
     its last four characters so the owner can tell which key it is."""
     c = current()
     return {"provider": c["provider"], "models": c["models"], "base_url": c["base_url"], "has_key": bool(c["key"]),
+            "reasoning_effort": c["reasoning_effort"],
             "key_hint": c["key"][-4:] if len(c["key"]) >= 12 else "", "ready": ready(), "label": label(),
             "saved_here": bool(_from_dashboard().get("provider")),
+            "codex": codex.status() if c["provider"] == "codex" else None,
             "providers": [{"id": k, "label": v[0], "address": v[1], "needs_key": k not in NO_KEY, "key_url": v[3], "example": v[4]}
                           for k, v in PROVIDERS.items()]}
 
 
-def save(provider_id: str, model_ids, address: str = "", new_key=None) -> dict:
-    """Save the choice made in the dashboard. `new_key` None keeps the key that is already there (the page never
-    has it to send back); an empty string removes it."""
-    p = ALIASES.get(str(provider_id or "").strip().lower(), str(provider_id or "").strip().lower())
-    if p not in PROVIDERS:
-        raise ValueError("Choose one of the AI services in the list.")
+def validate_models(model_ids) -> list:
+    """The same model names are accepted when saving settings or testing a subscription."""
     if isinstance(model_ids, str):
         model_ids = model_ids.split(",")
     ms = [str(m).strip()[:120] for m in (model_ids or []) if str(m).strip()][:5]
@@ -120,19 +123,32 @@ def save(provider_id: str, model_ids, address: str = "", new_key=None) -> dict:
         raise ValueError("Enter the model to use.")
     if any(not re.fullmatch(r"[\w.\-:/@]+", m) for m in ms):
         raise ValueError("A model id has letters, digits and . - : / only.")
-    address = str(address or "").strip().rstrip("/")[:300]
+    return ms
+
+
+def save(provider_id: str, model_ids, address: str = "", new_key=None, reasoning_effort=None) -> dict:
+    """Save the choice made in the dashboard. `new_key` None keeps the key that is already there (the page never
+    has it to send back); an empty string removes it."""
+    p = ALIASES.get(str(provider_id or "").strip().lower(), str(provider_id or "").strip().lower())
+    if p not in PROVIDERS:
+        raise ValueError("Choose one of the AI services in the list.")
+    ms = validate_models(model_ids)
+    address = "" if p == "codex" else str(address or "").strip().rstrip("/")[:300]
     if address and not re.fullmatch(r"https?://[^\s]+", address):
         raise ValueError("The address has to start with http:// or https://")
     if p == "custom" and not address:
         raise ValueError("A custom service needs its address, for example http://127.0.0.1:1234/v1")
     old = current()
+    effort = codex.validate_effort(old["reasoning_effort"] if reasoning_effort is None and old["provider"] == p else reasoning_effort) if p == "codex" else ""
     k = old["key"] if new_key is None and old["provider"] == p else str(new_key or "").strip()[:400]
+    if p == "codex":
+        k = ""
     if not k and p not in NO_KEY:
         raise ValueError("Paste the key for this service.")
     with _lock:
         f = _file()
         tmp = f.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"provider": p, "models": ms, "base_url": address, "key": k}), encoding="utf-8")
+        tmp.write_text(json.dumps({"provider": p, "models": ms, "base_url": address, "key": k, "reasoning_effort": effort}), encoding="utf-8")
         try:
             os.chmod(tmp, 0o600)        # the key is only for whoever runs the server
         except OSError:
@@ -148,6 +164,8 @@ def list_models(provider_id=None, address=None, with_key=None) -> list:
     p = ALIASES.get(str(provider_id or c["provider"]).lower(), str(provider_id or c["provider"]).lower())
     if p not in PROVIDERS:
         raise ValueError("Choose one of the AI services in the list.")
+    if p == "codex":
+        return codex.list_models()
     k = str(with_key or "").strip() or (c["key"] if c["provider"] == p else "")
     base = str(address or "").strip().rstrip("/") or (c["base_url"] if c["provider"] == p else "") or PROVIDERS[p][1]
     if not base:
@@ -176,10 +194,25 @@ def list_models(provider_id=None, address=None, with_key=None) -> list:
     return sorted({m for m in found if m})[:400]
 
 
+def test_codex(model_ids, reasoning_effort=None) -> dict:
+    """Test the selected subscription model before replacing any working AI settings."""
+    ms = validate_models(model_ids)
+    effort = codex.validate_effort(current()["reasoning_effort"] if reasoning_effort is None else reasoning_effort)
+    text, sent, wrote = codex.run(ms[0], 'Answer with a JSON array that holds the single string "ok".',
+                                  schema={"type": "ARRAY", "items": {"type": "STRING"}}, reasoning_effort=effort)
+    if _parse(text) != ["ok"]:
+        raise AIError("Codex did not return the expected test answer. Try again.")
+    return {"ok": True, "model": ms[0], "reasoning_effort": effort, "tokens": sent + wrote}
+
+
 def test() -> dict:
     """One tiny request with the settings in use, to prove the key, the address and the model all work."""
     ms = models()
+    if provider() == "codex":
+        codex.status(refresh=True)
     if not ready():
+        if provider() == "codex":
+            raise codex.CodexError(codex.status()["error"] or "Save a Codex model under Settings, AI first.")
         raise ValueError("Save a service, a model and a key first.")
     out, sent, wrote = call(ms[0], 'Answer with a JSON array that holds the single string "ok".', {"type": "ARRAY", "items": {"type": "STRING"}})
     return {"ok": True, "model": ms[0], "tokens": sent + wrote, "answer": str(out)[:80]}
@@ -194,6 +227,8 @@ problem = {"text": "", "at": 0.0}       # why the AI last failed, for the dashbo
 
 def explain(e) -> str:
     """What went wrong with an AI call, in words the owner can act on."""
+    if isinstance(e, codex.CodexError):
+        return str(e)
     text, low = str(e), str(e).lower()
     name = (models() or ["?"])[0]
     m = re.match(r"HTTP (\d{3})\b", text)
@@ -311,6 +346,9 @@ def call(model: str, prompt: str, schema: dict, timeout: float | None = None):
     `timeout` is how long one answer may take. A live stream passes a short one, because a slow
     answer must not stop the recording."""
     how = PROVIDERS[provider()][2]
+    if how == "codex":
+        text, sent, wrote = codex.run(model, prompt, schema=schema, timeout=timeout, reasoning_effort=current()["reasoning_effort"])
+        return _parse(text), sent, wrote
     return {"gemini": _gemini, "openai": _openai, "anthropic": _anthropic}[how](model, prompt, schema, timeout)
 
 
@@ -323,6 +361,8 @@ def see(prompt: str, image: bytes, timeout: float | None = None) -> tuple[str, i
     if not ready() or not image or not models():
         return "", 0, 0
     model = models()[0]
+    if provider() == "codex":
+        return codex.run(model, prompt, image=image, timeout=timeout, reasoning_effort=current()["reasoning_effort"])
     b64 = base64.b64encode(image).decode()
     how = PROVIDERS[provider()][2]
     if how == "gemini":

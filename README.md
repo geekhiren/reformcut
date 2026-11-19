@@ -18,7 +18,7 @@ creator's live stream and clip the highlights while the stream is still running.
   spacing and daily caps (see [DEPLOY.md](DEPLOY.md#connecting-youtube-instagram-and-tiktok) for the one-time setup).
 - **No sign-in on your own computer.** It opens straight into the dashboard. On a shared server, switch accounts on
   (`REFORMCUT_ACCOUNTS=1`) for email or Google sign-in and an admin dashboard.
-- **Your own AI.** Gemini, OpenAI, Grok, Groq, OpenRouter, Claude, a local model through Ollama, or anything that
+- **Your own AI.** Gemini, OpenAI, a Codex subscription, Grok, Groq, OpenRouter, Claude, a local model through Ollama, or anything that
   speaks the OpenAI chat format. No key at all also works: clips are then picked by loudness.
 
 ## Quick start
@@ -114,6 +114,7 @@ REFORMCUT_AI_KEY=your-key-here
 |---|---|---|
 | `gemini` | Google Gemini | https://aistudio.google.com/apikey |
 | `openai` | OpenAI | https://platform.openai.com/api-keys |
+| `codex` | Codex (your ChatGPT subscription) | Sign in through Codex CLI; see below |
 | `xai` | Grok (xAI) | https://console.x.ai |
 | `groq` | Groq | https://console.groq.com/keys |
 | `openrouter` | OpenRouter (many models, one key) | https://openrouter.ai/keys |
@@ -139,6 +140,41 @@ Reform Cut hears English by default. To clip videos in Arabic, add the Arabic sp
 offers to download it. Set a creator's language on their Setup page so their live recordings use it too.
 It understands Modern Standard Arabic and everyday dialects, and the AI turns English words said in between
 back into English. Captions on the clips are in English.
+
+### Use your Codex subscription
+
+Install [Codex CLI](https://developers.openai.com/codex/cli) or the Codex desktop app on the computer that runs
+PeakCut. Use a recent CLI supporting `--ignore-user-config`, `--ignore-rules` and app-server account login.
+
+Open **Settings, AI subscription**. If Codex is already signed in, the page shows your account and plan. Otherwise,
+press **Connect ChatGPT**, finish sign-in on the official ChatGPT page, and return to PeakCut. It checks the login
+automatically. Choose an available model from the dropdown (or **Automático** to let Codex choose) and a supported
+reasoning effort. The effort list updates with the selected model: Baixo, Médio, Alto, Extra alto and any other levels
+that model offers. Keep **Padrão do modelo** for its default effort. Press **Usar esta assinatura**, **Salvar e testar**
+or **Testar assinatura**. Your choice is saved only after a successful test and is used for text and image requests. No API key
+or password is entered into PeakCut. Calls use your subscription's Codex allowance and limits.
+PeakCut refuses an API-key login for this provider and never falls back to API billing.
+
+The account is shared with Codex on this computer. **Connect another account** opens the official login again.
+**Cancel connection** only cancels the pending attempt; it does not sign Codex out. The login link expires after ten
+minutes. For terminal-only setups, `codex login` still works. The original **Settings, AI** route remains supported.
+
+The adapter is Python and invokes the official CLI, which handles login and credential renewal. It runs each
+request separately in a temporary, read-only working directory, with shell execution, web search, apps, plugins,
+image generation and additional agents disabled. Text, JSON clip suggestions,
+captions and image analysis use the same subscription. Calls run one at a time; live clipping may need a faster model
+to meet its short deadlines. On a different machine or in a container, Codex must be installed and signed in there.
+
+To configure it through `.env` instead of the dashboard:
+
+```ini
+PEAKCUT_AI_PROVIDER=codex
+PEAKCUT_AI_MODELS=default
+```
+
+If Codex cannot be found, set `PEAKCUT_CODEX_COMMAND` to the executable's full path. On Windows the adapter also
+queries Windows' registered desktop application when its executable is absent from PATH, and finds the native
+binary inside standard npm installations.
 
 ## Settings
 
