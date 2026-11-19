@@ -85,6 +85,8 @@ def _font_dir() -> Path:
 
 
 LAYOUTS = {"blur": "Full frame + blurred fill", "zoom": "Zoomed in + blurred fill", "crop": "Fill the screen (centre crop)",
+           "left": "Fill the screen, keep the left side", "right": "Fill the screen, keep the right side",
+           "fit": "Full frame on black", "split": "Split screen: left half on top, right half below (two people)",
            "gameplay": "Game full width, facecam below. Cuts nothing",
            "fill": "Fill the screen, facecam in the corner. Cuts the sides"}
 
@@ -97,6 +99,7 @@ CAM_GAP = 30        # space between the game and the facecam under it
 CAM_CLEAR = 40      # clear space kept between the facecam band and the captions
 PIP_W = 380         # facecam width in the fill layout, where it sits in the corner of the picture
 PIP_MARGIN = 26
+_FILLS = ("crop", "fill", "left", "right")      # layouts where the picture covers the whole frame
 
 
 def _ts(t):
@@ -158,7 +161,9 @@ def geometry(src_w, src_h, layout, facecam=None, hook_h=0):
     if src_h >= src_w:
         # already vertical or square: a band would gain nothing, so the whole frame fills the screen
         layout = "fill" if layout == "gameplay" else "crop"
-    if layout == "blur":
+    if layout not in LAYOUTS:
+        layout = "blur"
+    if layout in ("blur", "fit"):
         fg_h = min(H, int(round(W * src_h / src_w / 2)) * 2)
     elif layout == "zoom":
         fg_h = 1000
@@ -167,12 +172,14 @@ def geometry(src_w, src_h, layout, facecam=None, hook_h=0):
     else:
         fg_h = H
     top = (H - fg_h) // 2
-    if layout in ("crop", "fill"):
+    if layout in _FILLS:
         return layout, fg_h, 300, 1380
     if layout == "gameplay":
         # The game is never covered: the heading sits above it and the camera in its own band below.
         band = band_top(fg_h, facecam_height(facecam, fg_h, hook_h), hook_h)
         return layout, fg_h, band - max(118, int(round(hook_h)) // 2 + 16), CAP_Y
+    if layout == "split":
+        return layout, fg_h, 230, H // 2        # captions sit on the line between the two people
     return layout, fg_h, max(230, top - 190), min(1640, top + fg_h + 180)
 
 
@@ -329,6 +336,17 @@ def _filter(layout, fg_h, facecam=None, hook_h=0):
                 f"[b][p]overlay={W - PIP_W - PIP_MARGIN}:{PIP_MARGIN}[v0];")
     if layout in ("crop", "fill", "gameplay"):
         return f"[0:v]fps={config.OUT_FPS},scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1[v0];"
+    fill = f"[0:v]fps={config.OUT_FPS},scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}"
+    if layout == "left":
+        return fill + ":0:0,setsar=1[v0];"
+    if layout == "right":
+        return fill + ":in_w-out_w:0,setsar=1[v0];"
+    if layout == "fit":
+        return f"[0:v]fps={config.OUT_FPS},scale={W}:{fg_h},pad={W}:{H}:0:(oh-ih)/2:black,setsar=1[v0];"
+    if layout == "split":
+        half = f"scale={W}:{H // 2}:force_original_aspect_ratio=increase,crop={W}:{H // 2}"
+        return (f"[0:v]fps={config.OUT_FPS},split=2[l][r];[l]crop=iw/2:ih:0:0,{half}[t];"
+                f"[r]crop=iw/2:ih:iw/2:0,{half}[u];[t][u]vstack,setsar=1[v0];")
     return (f"[0:v]fps={config.OUT_FPS},split=2[a][b];"
             f"[a]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=6:2,"
             f"scale={W}:{H},eq=brightness=-0.14:saturation=1.15[bg];"

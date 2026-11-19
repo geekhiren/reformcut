@@ -2,6 +2,7 @@
 
 Public pages:  /  /login  /signup          The app:  /app  (signed-in users only)
 Everything under /api, /media and /oauth needs a session, except /api/auth/* and /api/public."""
+import contextlib
 import hashlib
 import hmac
 import ipaddress
@@ -1609,6 +1610,34 @@ def apps_put(request: Request, body: dict = Body(...)):
         return accounts.save_app(str(body.get("platform", "")), body.get("client_id"), body.get("client_secret"))
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+# ---------------------------------------------------------------- YouTube cookies, for servers YouTube refuses
+# A secret like a password: it is saved to a file only this server reads, and never sent back to the page.
+@app.get("/api/youtube-cookies")
+def yt_cookies_get(request: Request):
+    _admin(request)
+    f = config.YT_COOKIES
+    return {"saved": f.is_file(), "updated": int(f.stat().st_mtime) if f.is_file() else 0}
+
+
+@app.put("/api/youtube-cookies")
+def yt_cookies_put(request: Request, body: dict = Body(...)):
+    _admin(request)
+    f, text = config.YT_COOKIES, str(body.get("text") or "")
+    if body.get("remove"):
+        f.unlink(missing_ok=True)
+    else:
+        rows = [l.split("\t") for l in text.splitlines() if l.strip() and not l.startswith("# ")]
+        if len(text) > 1_000_000 or not any(len(r) == 7 and "youtube.com" in r[0] for r in rows):
+            raise HTTPException(400, "That doesn't look like a cookies.txt file with YouTube cookies in it. Export it "
+                                     "from a browser signed in to YouTube, with an extension such as \"Get cookies.txt LOCALLY\".")
+        text = text if text.startswith("# Netscape") else "# Netscape HTTP Cookie File\n" + text
+        f.write_text(text, encoding="utf-8")
+        with contextlib.suppress(OSError):
+            f.chmod(0o600)
+    media._yt_refused_until = 0.0        # try YouTube again straight away
+    return yt_cookies_get(request)
 
 
 @app.post("/api/posts")

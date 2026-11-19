@@ -136,6 +136,9 @@ FONTS_DIR = DATA_DIR / "fonts"          # caption fonts, copied from studio/font
 # clips (seconds instead of transcribing hours), and our own model is run only on the clips themselves.
 YT_TRANSCRIPT = env("REFORMCUT_YT_TRANSCRIPT", "1") != "0"
 # Parakeet is fast for English; Whisper handles Hindi-English mixed speech.
+# YouTube often refuses servers in data centres ("sign in to confirm you're not a bot"). Cookies from a signed-in
+# YouTube account get past that: an admin pastes them under Settings, Connected apps, and they are kept in this file.
+YT_COOKIES = Path(env("REFORMCUT_YT_COOKIES") or DATA_DIR / "youtube-cookies.txt")
 ASR_BACKEND = env("REFORMCUT_ASR_BACKEND", "parakeet").strip().lower()
 if ASR_BACKEND not in ("parakeet", "whisper"):
     raise ValueError("REFORMCUT_ASR_BACKEND must be parakeet or whisper.")
