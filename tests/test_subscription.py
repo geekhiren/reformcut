@@ -13,10 +13,10 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 _data = tempfile.TemporaryDirectory(prefix="pc-subscription-test-")
-os.environ.update(PEAKCUT_DATA=_data.name, DATABASE_URL="", PEAKCUT_ACCOUNTS="0",
-                  PEAKCUT_FETCH_MODEL="0", PEAKCUT_UPDATE_CHECK="0", PEAKCUT_AI_PROVIDER="gemini",
-                  PEAKCUT_AI_MODELS="", PEAKCUT_AI_KEY="", PEAKCUT_AI_KEY_FILE="",
-                  PEAKCUT_PUBLIC_URL="http://127.0.0.1:8765")
+os.environ.update(REFORMCUT_DATA=_data.name, DATABASE_URL="", REFORMCUT_ACCOUNTS="0",
+                  REFORMCUT_FETCH_MODEL="0", REFORMCUT_UPDATE_CHECK="0", REFORMCUT_AI_PROVIDER="gemini",
+                  REFORMCUT_AI_MODELS="", REFORMCUT_AI_KEY="", REFORMCUT_AI_KEY_FILE="",
+                  REFORMCUT_PUBLIC_URL="http://127.0.0.1:8765")
 from studio import codex
 try:
     from studio import subscription

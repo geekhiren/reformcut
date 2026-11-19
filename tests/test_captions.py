@@ -55,11 +55,12 @@ def main(data):
             job = jobs.create(source, {}, enqueue=False)
             check("the default is to show captions", job["options"]["captions"] is True)
             job["options"].pop("captions")
+            (Path(data) / "source.mp4").write_bytes(b"")   # the source must exist (or be in cloud storage) to render
             job.update(status="done", source_path=str(Path(data) / "source.mp4"), width=1920, height=1080,
                        duration=4.0, clips=[clip])
             jobs.save(job)
 
-        with (ctx.as_user(user), patch.object(render, "_render_in", return_value={"file": "clip1.mp4"}) as encode,
+        with (ctx.as_user(user), patch.object(render, "_render_in", return_value={"file": "clip1.mp4", "cover": "clip1.jpg"}) as encode,
               patch.object(brain, "english_captions", return_value=FIXED) as prepare,
               patch.object(roman, "words", wraps=roman.words) as romanize,
               patch.object(jobs._q, "put") as queue):
