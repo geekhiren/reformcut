@@ -2162,7 +2162,7 @@ let subscriptionTimer = null, subscriptionVersion = 0, subscriptionUsing = false
 function stopSubscriptionPoll() {
   clearTimeout(subscriptionTimer); subscriptionTimer = null; subscriptionVersion++;
 }
-const effortLabels = {none:"Sem raciocínio", minimal:"Mínimo", low:"Baixo", medium:"Médio", high:"Alto", xhigh:"Extra alto", max:"Máximo", ultra:"Ultra"};
+const effortLabels = {none:"No reasoning", minimal:"Minimal", low:"Low", medium:"Medium", high:"High", xhigh:"Extra high", max:"Maximum", ultra:"Ultra"};
 function selectedSubscriptionModel() {
   const models = S.subscriptionCatalog || [], value = $("#sub_model")?.value;
   return value === "default" ? models.find(m => m.is_default) || models[0] : models.find(m => m.id === value);
@@ -2173,12 +2173,12 @@ function subscriptionChoiceChanged() {
   button.disabled = subscriptionUsing || !selectedSubscriptionModel();
   const changed = (k.models || []).length > 1 || $("#sub_model")?.value !== (k.models || ["default"])[0] || $("#sub_effort")?.value !== (k.reasoning_effort || "");
   S.subscriptionDraft = changed ? {email:k.account?.email, model:$("#sub_model")?.value, effort:$("#sub_effort")?.value || ""} : null;
-  button.textContent = !k.active ? "Usar esta assinatura" : changed ? "Salvar e testar" : "Testar assinatura";
+  button.textContent = !k.active ? "Use this subscription" : changed ? "Save and test" : "Test subscription";
 }
 function fillSubscriptionEfforts(preferred = "") {
   const model = selectedSubscriptionModel(), select = $("#sub_effort"); if (!select) return;
   const choices = model?.efforts || [], label = effortLabels[model?.default_effort];
-  select.innerHTML = `<option value="">Padrão do modelo${label ? " — " + esc(label) : ""}</option>` + choices.map(e => `<option value="${esc(e)}">${esc(effortLabels[e] || e)}</option>`).join("");
+  select.innerHTML = `<option value="">Model default${label ? " — " + esc(label) : ""}</option>` + choices.map(e => `<option value="${esc(e)}">${esc(effortLabels[e] || e)}</option>`).join("");
   select.disabled = subscriptionUsing || !model;
   select.value = choices.includes(preferred) ? preferred : "";
   subscriptionChoiceChanged();
@@ -2190,10 +2190,10 @@ async function loadSubscriptionCatalog(k, version, refresh, draft = null) {
     S.subscriptionCatalog = result.models;
     const select = $("#sub_model"), current = draft?.model ?? (k.models || ["default"])[0]; if (!select) return;
     const recommended = result.models.find(m => m.is_default) || result.models[0];
-    select.innerHTML = `<option value="default">Automático${recommended ? " — " + esc(recommended.label) : ""}</option>` +
+    select.innerHTML = `<option value="default">Automatic${recommended ? " — " + esc(recommended.label) : ""}</option>` +
       result.models.map(m => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join("");
     if (current !== "default" && !result.models.some(m => m.id === current)) {
-      select.innerHTML = `<option value="${esc(current)}" disabled>${esc(current)} — indisponível</option>` + select.innerHTML;
+      select.innerHTML = `<option value="${esc(current)}" disabled>${esc(current)} — not available</option>` + select.innerHTML;
     }
     select.value = current; select.disabled = subscriptionUsing;
     fillSubscriptionEfforts(draft?.effort ?? k.reasoning_effort ?? "");
@@ -2201,7 +2201,7 @@ async function loadSubscriptionCatalog(k, version, refresh, draft = null) {
     if (version !== subscriptionVersion) return;
     S.subscriptionCatalog = [];
     const select = $("#sub_model"), result = $("#sub_result");
-    if (select) { select.innerHTML = '<option value="">Não foi possível carregar os modelos</option>'; select.disabled = true; }
+    if (select) { select.innerHTML = '<option value="">Could not load the models</option>'; select.disabled = true; }
     if (result) result.textContent = `${err.message} Press Check connection to retry.`;
   }
 }
@@ -2218,13 +2218,13 @@ async function drawSubscription(body, refresh = false, provided = null) {
     <p class="help">Connect your ChatGPT account to use its Codex allowance for clip selection, titles and captions. Sign-in happens on the official ChatGPT page.</p>
     <div class="ai-state" role="status"><span class="pill ${connected ? "ok" : "warn"}">${connected ? "Account connected" : pending ? "Waiting for sign-in" : k.installed ? "Not connected" : "Codex not found"}</span><span class="sub">ChatGPT / Codex</span></div>
     ${k.error ? `<p class="help" role="alert">${esc(k.error)}</p>` : ""}
-    ${connected ? `<dl class="kv"><div><dt>Account</dt><dd>${esc(account.email || "ChatGPT account")}</dd></div><div><dt>Plan</dt><dd>${esc(account.plan || "ChatGPT")}</dd></div><div><dt>Used by PeakCut</dt><dd>${k.active ? "Yes" : "Not yet"}</dd></div></dl>
-      <div class="ai-form"><label class="f">Modelo Codex<select id="sub_model" disabled><option value="">Carregando modelos disponíveis…</option></select><span class="hint">Modelos disponíveis na sua conta. Automático deixa o Codex escolher.${(k.models || []).length > 1 ? " Salvar esta seleção substituirá a lista atual e usará somente este modelo." : ""}</span></label>
-      <label class="f">Nível de esforço<select id="sub_effort" disabled><option value="">Selecione um modelo</option></select><span class="hint">Mostra somente os níveis aceitos pelo modelo escolhido. Mudanças são salvas após um teste bem-sucedido.</span></label></div>
-      <div class="row" style="margin-top:20px"><button class="btn primary" data-act="subuse" disabled>${k.active ? "Testar assinatura" : "Usar esta assinatura"}</button><button class="btn" data-act="subrefresh">Check connection</button><button class="btn ghost" data-act="subconnect">Connect another account</button></div>`
-      : pending ? `<p class="help">Finish signing in on the ChatGPT page. PeakCut checks the connection automatically.</p><div class="row"><a class="btn primary" href="${esc(k.auth_url || "")}" target="_blank" rel="noopener noreferrer">Continue sign-in</a><button class="btn" data-act="subrefresh">Check connection</button><button class="btn" data-act="subcancel">Cancel connection</button></div>`
+    ${connected ? `<dl class="kv"><div><dt>Account</dt><dd>${esc(account.email || "ChatGPT account")}</dd></div><div><dt>Plan</dt><dd>${esc(account.plan || "ChatGPT")}</dd></div><div><dt>Used by Reform Cut</dt><dd>${k.active ? "Yes" : "Not yet"}</dd></div></dl>
+      <div class="ai-form"><label class="f">Codex model<select id="sub_model" disabled><option value="">Loading the models on your account…</option></select><span class="hint">The models your account can use. Automatic lets Codex choose.${(k.models || []).length > 1 ? " Saving this replaces the current list and uses only this model." : ""}</span></label>
+      <label class="f">How hard it thinks<select id="sub_effort" disabled><option value="">Choose a model first</option></select><span class="hint">Only the levels the chosen model accepts. Changes are saved once a test works. Higher levels are slower and use more of your allowance.</span></label></div>
+      <div class="row" style="margin-top:20px"><button class="btn primary" data-act="subuse" disabled>${k.active ? "Test subscription" : "Use this subscription"}</button><button class="btn" data-act="subrefresh">Check connection</button><button class="btn ghost" data-act="subconnect">Connect another account</button></div>`
+      : pending ? `<p class="help">Finish signing in on the ChatGPT page. Reform Cut checks the connection automatically.</p><div class="row"><a class="btn primary" href="${esc(k.auth_url || "")}" target="_blank" rel="noopener noreferrer">Continue sign-in</a><button class="btn" data-act="subrefresh">Check connection</button><button class="btn" data-act="subcancel">Cancel connection</button></div>`
       : `<div class="row"><button class="btn primary" data-act="subconnect" ${k.installed ? "" : "disabled"}>Connect ChatGPT</button><button class="btn" data-act="subrefresh">Check connection</button></div>`}
-    <p class="help" style="margin-top:20px">This is the account used by Codex on this computer. PeakCut never asks for your ChatGPT password or an API key.</p>
+    <p class="help" style="margin-top:20px">This is the account used by Codex on this computer. Reform Cut never asks for your ChatGPT password or an API key.</p>
     <p class="help" id="sub_result" role="status"></p></section>`;
   if (connected) await loadSubscriptionCatalog(k, version, refresh, draft);
   if (pending) subscriptionTimer = setTimeout(() => {
@@ -2386,7 +2386,7 @@ async function ytCookiesCard(logo) {
         <li>Paste the whole file below and save. Then close that private window without signing out.</li></ol>
       <label class="f">cookies.txt<textarea id="ytc" rows="6" spellcheck="false" autocomplete="off" placeholder="# Netscape HTTP Cookie File"></textarea></label>
       <div class="row"><button class="btn primary" data-act="ytcookies">Save</button><button class="btn ghost" data-act="appsetup" data-p="">Close</button></div></div>` : "";
-  return `<section class="set-sec"><h2>YouTube links</h2><p class="help">Only needed when YouTube links (videos or lives) fail with "YouTube isn't letting PeakCut download".</p>
+  return `<section class="set-sec"><h2>YouTube links</h2><p class="help">Only needed when YouTube links (videos or lives) fail with "YouTube isn't letting Reform Cut download".</p>
     <div class="apps"><div class="appcard"><span class="applogo" style="background:#FF0000">${logo}</span>
     <div class="apptx"><b>YouTube cookies</b><span>${st.saved ? `Saved ${new Date(st.updated * 1000).toLocaleString()}. Used for every YouTube link.` : "None saved."}</span></div>
     <div class="appact">${act}</div>${panel}</div></div></section>`;
