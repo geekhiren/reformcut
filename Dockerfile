@@ -18,7 +18,6 @@ ENV REFORMCUT_DATA=/data \
     REFORMCUT_PORT=8765 \
     REFORMCUT_TRUST_PROXY=1 \
     PYTHONUNBUFFERED=1
-VOLUME /data
 EXPOSE 8765
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=4)"
 # the first start downloads the speech model into /data/models by itself (about 480 MB)

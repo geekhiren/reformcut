@@ -22,7 +22,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from . import admin as admins
-from . import account, load
+from . import account, cloud, load
 from . import (accounts, ai, alerts, auth, brain, config, creators, ctx, db, jobs, live, media, posting,
                profiles, render, safe, transcribe, usage)
 
@@ -824,6 +824,11 @@ def create_from_file(file: UploadFile = File(...), options: str = Form("{}"), cr
     finally:
         tmp.unlink(missing_ok=True)
     job["source"]["path"] = str(dest)
+    # Upload a durable original before processing. Keep the local working copy
+    # until clip rendering is finished; the worker will then discard it.
+    if cloud.enabled() and not cloud.store(dest):
+        jobs.delete(job["id"])
+        raise HTTPException(503, "Could not save this video to cloud storage. Check the S3 settings and retry.")
     jobs.enqueue(job)
     return jobs.public(job)
 
@@ -970,6 +975,9 @@ def upload_finish(upid: str):
         shutil.rmtree(d, ignore_errors=True)
     _disk.pop(ctx.uid(), None)
     job["source"]["path"] = str(dest)
+    if cloud.enabled() and not cloud.store(dest):
+        jobs.delete(job["id"])
+        raise HTTPException(503, "Could not save this video to cloud storage. Check the S3 settings and retry.")
     jobs.enqueue(job)
     return jobs.public(job)
 
@@ -1150,6 +1158,9 @@ def media_file(jid: str, name: str, download: int = 0):
         raise HTTPException(404)
     f = Path(_job_or_404(jid)["dir"]) / "clips" / name
     if not f.is_file():
+        link = cloud.url(f, name if download else "")
+        if link:
+            return RedirectResponse(link, status_code=302, headers={"Cache-Control": "private, no-store"})
         raise HTTPException(404)
     return FileResponse(f, filename=name if download else None, headers={"Cache-Control": "private, max-age=300"})
 
@@ -1554,6 +1565,12 @@ def public_clip(token: str):
     with ctx.as_user(uid):
         job = jobs.get(job_id) if re.fullmatch(r"[\w\-]{8,60}", job_id) else None
         f = Path(job["dir"]) / "clips" / name if job else None
+    if f and not f.is_file():
+        from starlette.background import BackgroundTask
+        if not cloud.fetch(f):
+            raise HTTPException(404)
+        return FileResponse(f, media_type="video/mp4", headers={"Cache-Control": "private, no-store"},
+                            background=BackgroundTask(lambda: cloud.drop_local(f)))
     if not f or not f.is_file():
         raise HTTPException(404)
     return FileResponse(f, media_type="video/mp4", headers={"Cache-Control": "private, no-store"})

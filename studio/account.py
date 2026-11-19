@@ -7,7 +7,7 @@ import time
 import zipfile
 from pathlib import Path
 
-from . import auth, config, creators, ctx, db, jobs, live, usage
+from . import auth, cloud, config, creators, ctx, db, jobs, live, usage
 
 
 class Busy(Exception):
@@ -35,6 +35,7 @@ def delete_clip(jid: str, cid: str) -> bool:
     for name in (clip.get("file"), clip.get("cover")):
         if name:
             (d / "clips" / Path(str(name)).name).unlink(missing_ok=True)
+            cloud.remove(d / "clips" / Path(str(name)).name)
     for stem in {cid, Path(str(clip.get("file") or cid)).stem}:     # the captions and the notes kept beside the clip
         for ext in ("ass", "json"):
             (d / "clips" / f"{stem}.{ext}").unlink(missing_ok=True)
@@ -78,13 +79,15 @@ def delete_many(job_ids: list, clip_ids: list) -> dict:
 def zip_clips(clip_ids: list, limit_gb: float = 4.0) -> Path:
     """One .zip of finished clips, for downloading many at once. Clips are already compressed, so they are only
     stored, not squeezed again: making the file is as fast as copying."""
-    files, total, seen = [], 0, set()
+    files, total, seen, fetched = [], 0, set(), []     # fetched: pulled down from online storage just for this zip
     for jid, cid in dict.fromkeys(clip_ids):
         job = jobs.get(jid)
         clip = next((c for c in (job or {}).get("clips", []) if c["id"] == cid and c.get("status") == "done"), None)
         if not clip or not clip.get("file"):
             continue
         f = Path(job["dir"]) / "clips" / Path(str(clip["file"])).name
+        if cloud.fetch(f):
+            fetched.append(f)
         if not f.is_file():
             continue
         total += f.stat().st_size
@@ -107,6 +110,8 @@ def zip_clips(clip_ids: list, limit_gb: float = 4.0) -> Path:
     with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED, allowZip64=True) as z:
         for f, name in files:
             z.write(f, name)
+    for f in fetched:
+        f.unlink(missing_ok=True)
     return out
 
 
@@ -125,6 +130,7 @@ def delete_creator(cid: str) -> dict:
         jobs.delete(j["id"])
     with creators._lock:
         creators._mine().pop(cid, None)
+    cloud.remove_prefix(creators.root(cid))
     shutil.rmtree(creators.root(cid), ignore_errors=True)
     ctx.bump()
     return {"ok": True, "videos": len(mine)}
@@ -163,5 +169,6 @@ def delete_account(uid: str) -> dict:
     from . import posting
     posting.forget(uid)                            # scheduled posts must not outlive the account that owns them
     usage.forget(uid)
+    cloud.remove_prefix(config.user_dir(uid))
     shutil.rmtree(config.user_dir(uid), ignore_errors=True)
     return {"ok": True}

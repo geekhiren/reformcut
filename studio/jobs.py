@@ -12,7 +12,7 @@ import traceback
 import uuid
 from pathlib import Path
 
-from . import (brain, clean, config, creators, ctx, facecam, games, load, media, quality, render, roman, safe, stamps,
+from . import (brain, clean, cloud, config, creators, ctx, facecam, games, load, media, quality, render, roman, safe, stamps,
                transcribe, usage, fetch_model)
 
 
@@ -241,7 +241,7 @@ def _load_file(f: Path, uid: str):
         job.update(status="queued", stage="Picking up where it stopped", error=None, resume=True)
     if job.get("status") == "live":
         job.update(status="done", stage="Recording paused by a server update", was_live=True)
-    buffered = job.get("kind") == "live" and any((f.parent / "buffer").glob("*.ts"))
+    buffered = job.get("kind") == "live" and any((f.parent / "buffer").glob("p*.csv"))
     for c in job.get("clips", []):
         c.setdefault("captions", job["options"]["captions"])
         if c.get("src"):
@@ -364,6 +364,7 @@ def delete(jid):
             _by_user.get(job["user"], {}).pop(jid, None)
     if job:
         ctx.bump(job["user"])
+        cloud.remove_prefix(job["dir"])
         shutil.rmtree(job["dir"], ignore_errors=True)
     return bool(job)
 
@@ -488,6 +489,9 @@ def render_one(job, clip, words):
         off = clip.get("src_offset", 0.0)
         _facecam_for(job, clip)     # a layout changed after the clip was made needs the webcam now
         src = Path(clip["src"]) if clip.get("src") else Path(job["source_path"])
+        # Originals can live only in B2 after the initial processing run.
+        if not src.is_file() and not cloud.fetch(src):
+            raise RuntimeError("The source video is missing and could not be retrieved from cloud storage.")
         if not clip.get("src"):
             clip["end"] = min(clip["end"], job["duration"])
         if job["options"].get("clean"):        # starred out on the post as well as on the picture
@@ -498,6 +502,7 @@ def render_one(job, clip, words):
         if job["options"].get("clean"):
             near = clean.words(near)
         out = render.render_clip(src, d / "clips", clip["id"], local, near, job["width"], job["height"])
+        cloud.push(d / "clips" / out["file"], d / "clips" / out["cover"])     # online storage, if set up: frees the disk
         clip.update(out, status="done", version=clip.get("version", 0) + 1, error=None)
         post = {k: clip.get(k) for k in ("title", "description", "caption", "hashtags", "tags", "hook", "start", "end", "score")}
         (d / "clips" / f"{clip['id']}.json").write_text(json.dumps(post, indent=1), encoding="utf-8")
@@ -946,6 +951,8 @@ def _run_job(job):
                                           check=lambda: _check_stop(job))
     else:
         pieces, audio_file = False, Path(src["path"])
+        if not audio_file.is_file() and not cloud.fetch(audio_file):
+            raise RuntimeError("Uploaded video is unavailable in local or cloud storage.")
         info = media.probe(audio_file)
         if info["duration"] > config.MAX_VIDEO_HOURS * 3600:
             raise RuntimeError(f"That video is longer than {config.MAX_VIDEO_HOURS:g} hours, which is the limit.")
@@ -1152,6 +1159,9 @@ def _run_job(job):
     ahead.shutdown(wait=False)
     fetch.shutdown(wait=False)
     del audio
+    # Clip generation has finished. Keep the original remotely, free local space.
+    if src["type"] == "file":
+        cloud.drop_local(Path(src["path"]))
     clips = job["clips"]
     job["ai"] = {"model": model, "tokens": tokens, "log": notes[-5:],
                  "note": "The AI was unavailable, so clips were picked by loudness only." if clips and not model else ""}

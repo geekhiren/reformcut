@@ -1,6 +1,7 @@
 """Live sessions: record a stream into a rolling buffer, transcribe as it goes, let the AI pick clips."""
 import collections
 import json
+import queue
 import re
 import socket
 import ssl
@@ -11,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import alerts, auth, brain, config, creators, ctx, facecam, games, jobs, load, media, transcribe, usage
+from . import alerts, auth, brain, cloud, config, creators, ctx, facecam, games, jobs, load, media, transcribe, usage
 
 # ":username!user@host PRIVMSG #channel :the message"
 _NICK = re.compile(r"(?m)^:([A-Za-z0-9_]{2,25})!")
@@ -136,6 +137,12 @@ class Session:
         self.csv_seen = {}
         self.listed = set()           # every piece ffmpeg's own list has named (the rest are unfinished)
         self.swept = 0.0              # when the buffer was last searched for unfinished pieces
+        # Remote buffer writes happen outside recording/AI locks.
+        self._remote_ops = queue.Queue()
+        self._uploaded = set()
+        self._pinned = set()     # segments a render currently needs
+        self._deferred_remove = set()
+        self._remote_thread = None
         self.part = 0
         self.chat = collections.Counter()   # second -> messages
         self.chat_users = {}                 # second -> the people who talked, when it can be told
@@ -221,6 +228,10 @@ class Session:
 
     # ---------------------------------------------------------------- recording
     def start(self):
+        if cloud.enabled():
+            self._remote_thread = threading.Thread(target=self._remote_worker, daemon=True,
+                                                   name="live-cloud-buffer")
+            self._remote_thread.start()
         SESSIONS[self.job["id"]] = self
         threading.Thread(target=ctx.bind(self._ingest), daemon=True).start()
         threading.Thread(target=ctx.bind(self._analyze), daemon=True).start()
@@ -326,6 +337,36 @@ class Session:
                 break
             self.stop_flag.wait(3)
 
+    def _remote_worker(self):
+        """Upload completed segments in capture order, then remove expired cloud objects.
+
+        Do not perform network calls on the recorder or while its lock is held. Successful
+        uploads free the local segment unless a render currently has it pinned.
+        """
+        while True:
+            action, p = self._remote_ops.get()
+            try:
+                if action == "stop":
+                    return
+                if action == "remove":
+                    with self.lock:
+                        if p in self._pinned:
+                            self._deferred_remove.add(p)
+                            continue
+                    cloud.remove(p)
+                elif action == "store":
+                    with self.lock:
+                        current = any(s[0] == p for s in self.segments)
+                    if not current or not p.is_file():
+                        continue
+                    if cloud.store(p):
+                        with self.lock:
+                            self._uploaded.add(p)
+                            if p not in self._pinned:
+                                p.unlink(missing_ok=True)
+            finally:
+                self._remote_ops.task_done()
+
     def _scan_segments(self):
         """Pick up buffer pieces ffmpeg has finished writing."""
         with self.lock:
@@ -334,7 +375,8 @@ class Session:
                 if not f.exists():
                     continue
                 rows = [r.split(",") for r in f.read_text(encoding="utf-8", errors="ignore").splitlines() if r.count(",") >= 2]
-                fresh = rows[self.csv_seen.get(i, 0):]
+                processed = self.csv_seen.get(i, 0)
+                fresh = rows[processed:]
                 if fresh and i not in self.part_base:
                     # Where this part's own list starts: a list that carries on from where the last one
                     # stopped needs no shift, one that begins again at zero is shifted to the stream clock.
@@ -345,23 +387,36 @@ class Session:
                         self.part_base[i] = 0.0
                 base = self.part_base.get(i, 0.0)
                 for name, a, b in (r[:3] for r in fresh):
+                    processed += 1
                     try:
                         start, end = base + float(a), base + float(b)
                     except ValueError:
                         continue
                     if end <= start:
                         continue
+                    path = self.buf / name
+                    # Ignore incomplete or missing pieces; ffmpeg may have added the CSV
+                    # line just before the corresponding segment was flushed.
+                    if not path.is_file() and not cloud.exists_remote(path):
+                        processed -= 1
+                        break
                     # The list ffmpeg writes says where in the stream each piece sits. Adding the lengths
                     # up instead loses the whole of every piece that went missing (a Twitch stream drops
                     # some), so the buffer slowly fell behind the clock clips ask for, until a moment still
                     # in the buffer looked long gone.
-                    self.segments.append((self.buf / name, start, end))
+                    self.segments.append((path, start, end))
                     self.seg_clock = max(self.seg_clock, end)
+                    if cloud.enabled() and path.is_file():
+                        self._remote_ops.put(("store", path))
                 self.listed.update(r[0] for r in rows if len(r) > 2)
-                self.csv_seen[i] = len(rows)
+                self.csv_seen[i] = processed
             keep_from = self.seg_clock - self.settings["buffer_min"] * 60
             while self.segments and self.segments[0][2] < keep_from:
-                self.segments.pop(0)[0].unlink(missing_ok=True)
+                path = self.segments.pop(0)[0]
+                if path not in self._pinned:
+                    path.unlink(missing_ok=True)
+                if cloud.enabled():
+                    self._remote_ops.put(("remove", path))
             if time.time() - self.swept > 60:
                 # A recording that is stopped in the middle of a piece leaves that piece behind with no line
                 # in ffmpeg's list: no clip is ever cut from it, and it would sit in the buffer for ever. Every
@@ -658,7 +713,26 @@ class Session:
                 break               # the picture has stopped arriving: waiting will not help
             time.sleep(1)
         with self.lock:
-            segs = [s for s in self.segments if s[2] > clip["start"] - PAD and s[1] < clip["end"] + PAD and s[0].exists()]
+            segs = [s for s in self.segments if s[2] > clip["start"] - PAD and s[1] < clip["end"] + PAD]
+            self._pinned.update(s[0] for s in segs)
+        try:
+            missing = [s[0] for s in segs if not s[0].is_file() and not cloud.fetch(s[0])]
+            if missing:
+                clip.update(status="error", error="A recorded segment could not be retrieved from cloud storage.")
+                jobs.save(self.job)
+                return
+            self._render_from_segments(clip, segs)
+        finally:
+            with self.lock:
+                for s in segs:
+                    self._pinned.discard(s[0])
+                    if s[0] in self._deferred_remove:
+                        self._deferred_remove.discard(s[0])
+                        self._remote_ops.put(("remove", s[0]))
+                    if s[0] in self._uploaded and cloud.enabled():
+                        s[0].unlink(missing_ok=True)
+
+    def _render_from_segments(self, clip, segs):
         if not segs or segs[0][1] > clip["start"] + 2:
             clip.update(status="error", error="That part of the stream is no longer in the buffer.")
             jobs.save(self.job)
@@ -816,7 +890,14 @@ class Session:
             alerts.notify(f"recording finished for {self.job['source']['name']}: {len(self.job['clips'])} clips, "
                           f"{round(self.samples / SR / 60)} min.")
 
-        def cleanup():  # runs after any queued renders, then frees the buffer
+        def cleanup():  # after queued renders, drain cloud operations then release the buffer
+            if self._remote_thread:
+                self._remote_ops.join()
+                for seg in self.segments:
+                    self._remote_ops.put(("remove", seg[0]))
+                self._remote_ops.join()
+                self._remote_ops.put(("stop", None))
+                self._remote_thread.join(timeout=10)
             for f in self.buf.glob("*"):
                 f.unlink(missing_ok=True)
             self.finished = True
@@ -883,6 +964,9 @@ def recover(job):
         jobs.submit_live(lambda k=k: s._render(k))
 
     def cleanup():
+        if cloud.enabled():
+            for segment in s.segments:
+                cloud.remove(segment[0])
         for f in s.buf.glob("*"):
             f.unlink(missing_ok=True)
         job.pop("recover", None)
