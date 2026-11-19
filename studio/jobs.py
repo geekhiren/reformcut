@@ -148,7 +148,7 @@ def clean_options(options) -> dict:
             v = v if v in render.STYLES else DEFAULTS["style"]
         elif k == "layout":
             v = v if v in render.LAYOUTS else DEFAULTS["layout"]
-        elif k == "language":                    # "hinglish" is heard by Sarvam AI, "en" by the local model
+        elif k == "language":                    # "hinglish" is heard by Sarvam AI when its key is set, otherwise by local Whisper
             v = v if v in ("en", "hinglish") else "en"
         elif k == "lang":
             v = v if fetch_model.known(v) else DEFAULTS["lang"]

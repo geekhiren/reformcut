@@ -52,6 +52,14 @@ check("a video's language can be Hinglish", jobs.clean_options({"language": "hin
 check("...anything else is English", jobs.clean_options({"language": "xx"})["language"] == "en")
 check("videos are English unless chosen", jobs.DEFAULTS["language"] == "en")
 
+# ---- no Sarvam key: Hinglish is heard by Whisper on this computer, for free
+from unittest.mock import patch
+from studio import whisper
+with patch.object(sarvam_asr, "ready", return_value=False), patch.object(sarvam_asr, "transcribe") as paid, \
+        patch.object(whisper, "transcribe", return_value=[{"w": "bhai", "s": 0, "e": 0.4}]) as free:
+    got = transcribe.transcribe(np.zeros(16000, dtype=np.int16), lang="hinglish")
+check("without a Sarvam key, Hinglish uses local Whisper", free.called and not paid.called and got[0]["w"] == "bhai")
+
 print("ALL PASSED" if not fails else f"{len(fails)} failed")
 import shutil; shutil.rmtree(os.environ["REFORMCUT_DATA"], ignore_errors=True)
 sys.exit(1 if fails else 0)

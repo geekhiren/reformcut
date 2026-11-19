@@ -322,8 +322,12 @@ def transcribe(audio: np.ndarray, on_progress=None, lang: str = fetch_model.DEFA
     Speech is cut at quiet moments into 12-24 s pieces; silent pieces are skipped."""
     global _remote_down_until
     if lang == "hinglish":
+        # Sarvam AI (paid) when its key is set; otherwise Whisper on this computer, which is free
         from . import sarvam_asr
-        return sarvam_asr.transcribe(audio, on_progress)
+        if sarvam_asr.ready():
+            return sarvam_asr.transcribe(audio, on_progress)
+        from . import whisper
+        return whisper.transcribe(audio, on_progress)
     if config.ASR_BACKEND == "whisper" and lang in ("en", fetch_model.DEFAULT):
         from . import whisper
         return whisper.transcribe(audio, on_progress)
