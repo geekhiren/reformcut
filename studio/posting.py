@@ -123,10 +123,13 @@ def credit_line(creator, uploader=""):
     return line
 
 
-def _caption(clip, creator, uploader=""):
+def _caption(clip, creator, uploader="", social=False):
+    """The text under a post: the YouTube description, or for Instagram and TikTok (`social`) the caption written for
+    them. Then the credit, the creator's own footer (their follow line) and the hashtags last."""
     tags = " ".join("#" + h for h in clip.get("hashtags", []))
     line = credit_line(creator, uploader)
-    return "\n\n".join(x for x in (clip.get("description", ""), line, tags, creator.get("post_footer", "")) if x)
+    body = (social and clip.get("caption")) or clip.get("description", "")
+    return "\n\n".join(x for x in (body, line, creator.get("post_footer", ""), tags) if x)
 
 
 def _post(p):
@@ -141,12 +144,14 @@ def _post(p):
         path = Path(job["dir"]) / "clips" / clip["file"]
         creator = creators.get(job["creator"]) or dict(creators.DEFAULTS, name="clips")
         title, cap = clip.get("title") or clip.get("hook") or "Clip", _caption(clip, creator, job.get("uploader", ""))
+        # A caption written for Instagram and TikTok opens with its own first line; older clips lead with the title.
+        social = _caption(clip, creator, job.get("uploader", ""), social=True) if clip.get("caption") else f"{title}\n\n{cap}"
         if acc["platform"] == "youtube":
-            rid, url = accounts.youtube_upload(acc, path, title, cap + "\n\n#Shorts", clip.get("hashtags", []), creator["privacy"])
+            rid, url = accounts.youtube_upload(acc, path, title, cap + "\n\n#Shorts", clip.get("tags") or clip.get("hashtags", []), creator["privacy"])
         elif acc["platform"] == "instagram":
-            rid, url = accounts.instagram_upload(acc, path, f"{title}\n\n{cap}", job["id"])
+            rid, url = accounts.instagram_upload(acc, path, social, job["id"])
         elif acc["platform"] == "tiktok":
-            rid, url = accounts.tiktok_upload(acc, path, f"{title}\n\n{cap}", creator["privacy"])
+            rid, url = accounts.tiktok_upload(acc, path, social, creator["privacy"])
         else:
             raise RuntimeError("That kind of account is no longer supported.")
         p.update(status="posted", posted_at=time.time(), remote_id=rid, url=url, error=None)

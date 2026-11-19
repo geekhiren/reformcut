@@ -415,11 +415,13 @@ def request_render(jid, cid, changes: dict):
         raise ValueError("Those times aren't valid.")
     if not 3 <= new["end"] - new["start"] <= 180:
         raise ValueError("A clip can be 3 to 180 seconds long.")
-    for k in ("hook", "title", "description", "style", "layout"):
+    for k in ("hook", "title", "description", "caption", "style", "layout"):
         if k in changes:
-            new[k] = str(changes[k])[:{"hook": 60, "title": 100, "description": 2000}.get(k, 20)]
+            new[k] = str(changes[k])[:{"hook": 60, "title": 100, "description": 2000, "caption": 2000}.get(k, 20)]
     if "hashtags" in changes:
         new["hashtags"] = clean_hashtags(changes["hashtags"])
+    if "tags" in changes:
+        new["tags"] = brain.keywords(changes["tags"])
     if new.get("style") not in render.STYLES:
         new["style"] = DEFAULTS["style"]
     if new.get("layout") not in render.LAYOUTS:
@@ -440,11 +442,14 @@ def clean_hashtags(v) -> list:
 
 
 def save_post_text(job, clip, changes: dict):
-    """Change a clip's title, description and hashtags without making the clip again. Posting reads them
-    from the clip when it uploads, so the next post (or one still waiting in the queue) uses the new text."""
-    text = {k: str(changes[k] or "")[:{"title": 100, "description": 2000}[k]] for k in ("title", "description") if k in changes}
+    """Change a clip's title, description, caption, hashtags and YouTube tags without making the clip again. Posting
+    reads them from the clip when it uploads, so the next post (or one still waiting in the queue) uses the new text."""
+    text = {k: str(changes[k] or "")[:{"title": 100, "description": 2000, "caption": 2000}[k]]
+            for k in ("title", "description", "caption") if k in changes}
     if "hashtags" in changes:
         text["hashtags"] = clean_hashtags(changes["hashtags"])
+    if "tags" in changes:
+        text["tags"] = brain.keywords(changes["tags"])
     with _lock:
         clip.update(text)
     save(job)
@@ -486,7 +491,7 @@ def render_one(job, clip, words):
         if not clip.get("src"):
             clip["end"] = min(clip["end"], job["duration"])
         if job["options"].get("clean"):        # starred out on the post as well as on the picture
-            for k in ("hook", "title", "description"):
+            for k in ("hook", "title", "description", "caption"):
                 clip[k] = clean.text(clip.get(k) or "")
         local = dict(clip, start=clip["start"] - off, end=clip["end"] - off, hook=roman.to_roman(clip.get("hook") or ""))
         near = _caption_words(job, clip, words, off) if clip.get("captions", True) else []
@@ -494,7 +499,7 @@ def render_one(job, clip, words):
             near = clean.words(near)
         out = render.render_clip(src, d / "clips", clip["id"], local, near, job["width"], job["height"])
         clip.update(out, status="done", version=clip.get("version", 0) + 1, error=None)
-        post = {k: clip[k] for k in ("title", "description", "hashtags", "hook", "start", "end", "score")}
+        post = {k: clip.get(k) for k in ("title", "description", "caption", "hashtags", "tags", "hook", "start", "end", "score")}
         (d / "clips" / f"{clip['id']}.json").write_text(json.dumps(post, indent=1), encoding="utf-8")
         if clip["version"] == 1:
             clip.setdefault("made_at", time.time())

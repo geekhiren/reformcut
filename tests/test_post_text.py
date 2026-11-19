@@ -15,7 +15,9 @@ WORDS = [{"w": w, "s": i * 0.5, "e": i * 0.5 + 0.4} for i, w in enumerate(SAID.s
 WORDS.append({"w": "LATER", "s": 50.0, "e": 50.4})           # said after the clip ends: never sent to the AI
 GOOD = {"start": 0, "end": 0, "score": 70, "hook": "NO WAY", "title": "The shot nobody expected",
         "description": "He hits it from across the map. Visit www.example.com or ask @someone",
-        "hashtags": ["#gaming", "clutch shot", "fps"], "reason": "r"}
+        "hashtags": ["#gaming", "clutch shot", "fps"], "reason": "r",
+        "caption": "No way he hit that 😱\n✅ Stay calm\n\n\n\n📌 SAVE this @someone",
+        "tags": ["#fps clutch", "Fps Clutch", "long range shot"] + ["word%02d" % i for i in range(100)]}
 
 
 def check(name, condition):
@@ -41,8 +43,13 @@ def main(data):
         # ---- the AI's answer, in each shape services send it
         with patch.object(brain, "ask_ai", return_value=([GOOD], "m", 10)) as ai:
             t = brain.post_text(SAID)
-            check("the AI's answer becomes a title, description and hashtags", set(t) == {"title", "description", "hashtags"}
-                  and t["title"] == "The shot nobody expected")
+            check("the AI's answer becomes a title, description, caption, hashtags and tags",
+                  set(t) == {"title", "description", "caption", "hashtags", "tags"} and t["title"] == "The shot nobody expected")
+            check("the caption keeps its lines and emojis, without @handles or runs of blank lines",
+                  t["caption"] == "No way he hit that 😱\n✅ Stay calm\n\n📌 SAVE this")
+            check("YouTube tags: no # sign, no repeats, inside the 500-character limit",
+                  t["tags"][:2] == ["fps clutch", "long range shot"]
+                  and sum(len(x) + 1 + (2 if " " in x else 0) for x in t["tags"]) <= 500)
             check("links and @handles never reach the post text", "example.com" not in t["description"] and "@" not in t["description"])
             check("hashtags come back as plain words", t["hashtags"] == ["gaming", "clutchshot", "fps"])
             check("what is said goes to the AI inside the transcript tags", SAID in ai.call_args.args[0]
@@ -100,6 +107,14 @@ def main(data):
             check("the copy next to the video file has the new text too", side["title"] == "My own title" and side["score"] == 80)
             check("posting uses the saved text", "My own words" in posting._caption(clip, {"post_footer": ""})
                   and "#funny #gaming #fps" in posting._caption(clip, {"post_footer": ""}))
+
+            server.clip_text(job["id"], "clip1", {"caption": "Insta words", "tags": "speaking tips, #confidence"})
+            check("typed YouTube tags are saved as phrases", clip["tags"] == ["speaking tips", "confidence"])
+            foot = {"post_footer": "FOLLOW us"}
+            social = posting._caption(clip, foot, social=True)
+            check("Instagram and TikTok get the caption; YouTube keeps the description",
+                  social.startswith("Insta words") and posting._caption(clip, foot).startswith("My own words"))
+            check("the follow line comes before the hashtags", social.endswith("FOLLOW us\n\n#funny #gaming #fps"))
 
             server.clip_text(job["id"], "clip1", {"title": "x" * 500})
             check("a very long title is cut to fit", len(clip["title"]) == 100 and clip["description"] == "My own words")
