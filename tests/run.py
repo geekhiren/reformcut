@@ -58,6 +58,7 @@ def main() -> int:
                 ("Hindi and Hinglish speech through Sarvam AI", ["tests/test_sarvam.py"]),
                 ("connecting YouTube, Instagram and TikTok", ["tests/test_connect.py"]),
                 ("every post credits the streamer", ["tests/test_credit.py"]),
+                ("Instagram cookie connection", ["tests/test_instagram_session.py"]),
                 ("the new-version notice", ["tests/test_updates.py"]),
                 ("no limits by default", ["tests/test_limits.py"]),
                 ("captions never overlap, stuck clips, sentence endings", ["tests/test_stuck.py"]),

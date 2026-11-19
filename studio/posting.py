@@ -159,7 +159,7 @@ def _post(p):
     except Exception as e:  # noqa: BLE001
         p["tries"] += 1
         p["error"] = str(e)[-300:]
-        if p["tries"] < 3 and clip and acc:
+        if p["tries"] < 3 and clip and acc and not acc.get("session_settings"):
             p.update(status="scheduled", due_at=time.time() + 600)  # try again in 10 minutes
         else:
             p["status"] = "failed"
