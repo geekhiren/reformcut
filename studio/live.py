@@ -134,6 +134,7 @@ class Session:
         self._remote_ops = queue.Queue()
         self._uploaded = set()
         self._pinned = set()     # segments a render currently needs
+        self._deferred_remove = set()
         self._remote_thread = None
         self.part = 0
         self.chat = collections.Counter()   # second -> messages
@@ -316,6 +317,10 @@ class Session:
                 if action == "stop":
                     return
                 if action == "remove":
+                    with self.lock:
+                        if p in self._pinned:
+                            self._deferred_remove.add(p)
+                            continue
                     cloud.remove(p)
                 elif action == "store":
                     with self.lock:
@@ -649,6 +654,9 @@ class Session:
             with self.lock:
                 for s in segs:
                     self._pinned.discard(s[0])
+                    if s[0] in self._deferred_remove:
+                        self._deferred_remove.discard(s[0])
+                        self._remote_ops.put(("remove", s[0]))
                     if s[0] in self._uploaded and cloud.enabled():
                         s[0].unlink(missing_ok=True)
 
