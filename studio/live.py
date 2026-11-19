@@ -18,6 +18,7 @@ _NICK = re.compile(r"(?m)^:([A-Za-z0-9_]{2,25})!")
 
 SESSIONS: dict = {}
 SEG_SEC = 6           # length of each buffer piece
+STALL_SEC = 90        # sound arriving but no picture for this long: start the recorder again
 PAD = 8               # seconds kept either side of a clip so it can be re-trimmed later
 CHECK_EVERY = 180     # look at the stream every 3 minutes...
 QUIET_MAX = 600       # ...but only ask the AI when something happened, or at most every 10 minutes when calm
@@ -131,7 +132,10 @@ class Session:
         self.t_done = 0.0             # transcript is complete up to this second
         self.segments = []            # (path, start, end) on the session clock
         self.seg_clock = 0.0
+        self.part_base = {}           # part -> the stream second that part's own list starts at
         self.csv_seen = {}
+        self.listed = set()           # every piece ffmpeg's own list has named (the rest are unfinished)
+        self.swept = 0.0              # when the buffer was last searched for unfinished pieces
         self.part = 0
         self.chat = collections.Counter()   # second -> messages
         self.chat_users = {}                 # second -> the people who talked, when it can be told
@@ -156,6 +160,7 @@ class Session:
         self.last_spike = -999.0      # when the last jump was sent to the AI (stream seconds)
         self.base = {}                # running averages the jumps are measured against, shown on the card
         self.spikes = 0
+        self.stalled = 0              # times the picture stopped while the sound went on, and the recorder restarted
         self.game = ""                # which game this stream is, when it can be told
         self.facecam_box = None       # where the webcam is, found once the first clip is made
         self.facecam_checked = False  # the look is made once, even when it finds nothing
@@ -302,6 +307,14 @@ class Session:
                         self.pending += data
                         self.samples += len(data) // 2
                         self.db.append(level)
+                    if self.samples / SR - self.seg_clock > STALL_SEC:
+                        # The sound is still arriving but no picture has been written for a while: Twitch
+                        # does this around an ad break or a stream hiccup, and ffmpeg can stay stuck on it
+                        # for the rest of the stream, leaving a recording with sound and no video. Start
+                        # again from the live edge; the break in the picture shows up as a gap in the buffer.
+                        self.stalled += 1
+                        proc.terminate()
+                        break
                 proc.stdout.close()
                 try:
                     proc.wait(timeout=5)
@@ -321,17 +334,46 @@ class Session:
                 if not f.exists():
                     continue
                 rows = [r.split(",") for r in f.read_text(encoding="utf-8", errors="ignore").splitlines() if r.count(",") >= 2]
-                for name, a, b in (r[:3] for r in rows[self.csv_seen.get(i, 0):]):
+                fresh = rows[self.csv_seen.get(i, 0):]
+                if fresh and i not in self.part_base:
+                    # Where this part's own list starts: a list that carries on from where the last one
+                    # stopped needs no shift, one that begins again at zero is shifted to the stream clock.
+                    first = fresh[0]
                     try:
-                        dur = max(0.0, float(b) - float(a))
+                        self.part_base[i] = 0.0 if float(first[1]) >= self.seg_clock - 5 else self.seg_clock
+                    except (IndexError, ValueError):
+                        self.part_base[i] = 0.0
+                base = self.part_base.get(i, 0.0)
+                for name, a, b in (r[:3] for r in fresh):
+                    try:
+                        start, end = base + float(a), base + float(b)
                     except ValueError:
                         continue
-                    self.segments.append((self.buf / name, self.seg_clock, self.seg_clock + dur))
-                    self.seg_clock += dur
+                    if end <= start:
+                        continue
+                    # The list ffmpeg writes says where in the stream each piece sits. Adding the lengths
+                    # up instead loses the whole of every piece that went missing (a Twitch stream drops
+                    # some), so the buffer slowly fell behind the clock clips ask for, until a moment still
+                    # in the buffer looked long gone.
+                    self.segments.append((self.buf / name, start, end))
+                    self.seg_clock = max(self.seg_clock, end)
+                self.listed.update(r[0] for r in rows if len(r) > 2)
                 self.csv_seen[i] = len(rows)
             keep_from = self.seg_clock - self.settings["buffer_min"] * 60
             while self.segments and self.segments[0][2] < keep_from:
                 self.segments.pop(0)[0].unlink(missing_ok=True)
+            if time.time() - self.swept > 60:
+                # A recording that is stopped in the middle of a piece leaves that piece behind with no line
+                # in ffmpeg's list: no clip is ever cut from it, and it would sit in the buffer for ever. Every
+                # restart of the recorder used to leave one behind: about forty megabytes each time.
+                self.swept = time.time()
+                now = time.time()
+                for p in self.buf.glob("p*.ts"):
+                    try:
+                        if p.name not in self.listed and now - p.stat().st_mtime > 60:
+                            p.unlink(missing_ok=True)
+                    except OSError:          # already gone: a finished recording clears the buffer
+                        pass
 
     # ---------------------------------------------------------------- chat (Twitch only)
     def _chat(self, channel):
@@ -599,16 +641,31 @@ class Session:
 
     def _render(self, clip):
         """Runs on the render worker: copy the needed buffer pieces, then make the clip."""
-        deadline = time.time() + 45
-        while time.time() < deadline:
+        # The picture comes a few seconds behind the sound, and after a hiccup on the stream it can be a
+        # minute behind. Wait for it while it is still being written: a clip is never cut down to a stub.
+        began, moved_at = time.time(), time.time()
+        with self.lock:
+            seen = self.seg_clock
+        while time.time() - began < 150:
             self._scan_segments()
             if self.ended or (self.segments and self.segments[-1][2] >= clip["end"] + 1):
                 break
+            with self.lock:
+                clock = self.seg_clock
+            if clock > seen + 0.5:
+                moved_at, seen = time.time(), clock       # the picture is still arriving: it will get there
+            elif time.time() - moved_at > 20:
+                break               # the picture has stopped arriving: waiting will not help
             time.sleep(1)
         with self.lock:
             segs = [s for s in self.segments if s[2] > clip["start"] - PAD and s[1] < clip["end"] + PAD and s[0].exists()]
         if not segs or segs[0][1] > clip["start"] + 2:
             clip.update(status="error", error="That part of the stream is no longer in the buffer.")
+            jobs.save(self.job)
+            return
+        if any(b[1] > a[2] + 2 for a, b in zip(segs, segs[1:])):
+            # Pieces are missing in the middle: the clip would come out short, with its captions early.
+            clip.update(status="error", error="That part of the stream was not recorded: the recording dropped out there.")
             jobs.save(self.job)
             return
         if "width" not in self.job:
@@ -637,9 +694,19 @@ class Session:
         dur = segs[-1][2] - segs[0][1]
         offset = self._align(src, segs[0][1] + self.clock_fix, dur)
         self.clock_fix = offset - segs[0][1]  # the two clocks drift ~4 s an hour; start the next clip from here
-        clip.update(src=str(src), src_offset=round(offset, 2), src_end=round(offset + dur, 2))
-        clip["start"] = max(clip["start"], clip["src_offset"])
-        clip["end"] = min(clip["end"], clip["src_end"])
+        src_offset, src_end = round(offset, 2), round(offset + dur, 2)
+        span = _clip_span(clip, src_offset, src_end)
+        if span is None:
+            # The end of the moment is not in the recorded picture: the picture can stop for a while on a
+            # stream hiccup, and everything said meanwhile sits on the sound clock only. Cutting what is
+            # there would make a clip that stops before its payoff, so this one is not made at all.
+            src.unlink(missing_ok=True)
+            clip.update(status="error", error="That part of the stream was not recorded: the picture stopped "
+                                              "before the end of it.")
+            jobs.save(self.job)
+            return
+        clip.update(src=str(src), src_offset=src_offset, src_end=src_end)
+        clip["start"], clip["end"] = span
         jobs.render_one(self.job, clip, list(self.words))
 
     def _align(self, src, guess, dur):
@@ -670,6 +737,8 @@ class Session:
 
     def clip_last(self, seconds):
         end = self.samples / SR
+        if self.seg_clock and self.seg_clock < end:
+            end = self.seg_clock        # the picture has not caught up with the sound: clip what was recorded
         if end < 5:
             raise ValueError("Nothing has been recorded yet.")
         self.manual.append({"start": max(0.0, end - seconds), "end": end})
@@ -756,26 +825,54 @@ class Session:
         jobs.submit_live(cleanup)
 
 
-def recover(job):
-    """After a restart: finish the clips of an interrupted recording from the stream pieces still on disk."""
-    c = creators.get(job["creator"]) or dict(creators.DEFAULTS)
-    s = Session(job, c)
-    s.ended, s.end_note = True, "Recording stopped when the studio closed"
+def _clip_span(clip, src_offset, src_end):
+    """The part of a clip the recorded picture really holds, or None when the end of it was never recorded.
+
+    The clip's own times are on the transcript clock; the source file starts at `src_offset` and covers up to
+    `src_end`. A second of give is allowed at the edges, because the picture stops between two frames."""
+    if clip["end"] > src_end + 1:
+        return None
+    return max(clip["start"], src_offset), min(clip["end"], src_end)
+
+
+def _pieces_on_disk(s):
+    """Every piece still on disk, put back at its real time in the stream. Used after a restart, when the
+    running clock is gone and only ffmpeg's own lists are left to go by."""
     s.part = len(list(s.buf.glob("p*.csv")))
     s.seg_clock = 0.0
     s.csv_seen = {}
     with s.lock:
         for i in range(1, s.part + 1):
             f = s.buf / f"p{i:02d}.csv"
+            if not f.exists():
+                continue
             rows = [r.split(",") for r in f.read_text(encoding="utf-8", errors="ignore").splitlines() if r.count(",") >= 2]
+            base = 0.0                  # the first part's list starts at the start of the recording
+            if i > 1 and rows:
+                try:
+                    if float(rows[0][1]) < s.seg_clock - 5:
+                        base = s.seg_clock       # this part's list begins again at zero
+                except ValueError:
+                    pass
             for name, a, b in (r[:3] for r in rows):
                 try:
-                    dur = max(0.0, float(b) - float(a))
+                    start, end = base + float(a), base + float(b)
                 except ValueError:
                     continue
-                s.segments.append((s.buf / name, s.seg_clock, s.seg_clock + dur))
-                s.seg_clock += dur
+                if end <= start:
+                    continue
+                s.segments.append((s.buf / name, start, end))
+                s.listed.add(name)
+                s.seg_clock = max(s.seg_clock, end)
             s.csv_seen[i] = len(rows)
+
+
+def recover(job):
+    """After a restart: finish the clips of an interrupted recording from the stream pieces still on disk."""
+    c = creators.get(job["creator"]) or dict(creators.DEFAULTS)
+    s = Session(job, c)
+    s.ended, s.end_note = True, "Recording stopped when the studio closed"
+    _pieces_on_disk(s)
     try:
         s.words = json.loads((s.dir / "words.json").read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001
